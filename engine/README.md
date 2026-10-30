@@ -53,6 +53,7 @@ An existing contract is never replaced without `--force`, because that would los
 | `llm.py` | The model connection |
 | `generate.py` | Writes questions from approved items |
 | `report.py`, `templates/` | Presents the verdicts |
+| `judge_check.py` | Tries the judge on known answers |
 | `judge.py`, `results.py` | Decides whether each answer was right |
 | `run.py`, `transcripts.py` | Asks the questions and saves the answers |
 | `target.py` | The target file, and talking to a bot |
@@ -199,6 +200,8 @@ A bot is treated as untrusted. Redirects are never followed, so a bot can't send
 1. **Automatic checks, with no model.** Any amount of money that isn't in the policies or the customer's question fails, even beside the right figure, which catches stale and leaked numbers. A fact also fails if the reply gives only amounts other than the expected one. A bot doing sums can be failed wrongly, because its total appears in no policy. Tests can also require or forbid an action, and code checks what the bot really did, so "I've passed you to a colleague" fails if it didn't. If a bot's tools can't be seen, that check is skipped and the report says so.
 2. **The model** judges everything else, seeing the question, the reply, what was captured, what the test checks, and the full text of every current policy given with `--policy`. It needs all of them, because a true detail in a reply can come from any policy. The bot's reply is sent as data.
 3. **Code checks the model's work.** A failure must quote words that really are in the reply or in what the bot did, and a pass on a fact needs the reply to state the value. Otherwise the verdict becomes `unclear`.
+
+`audit-engine check-judge` tries the judge on [answers whose right verdict is known](../examples/judge-known-answers.yaml), to show whether a change helped. It isn't a measure of accuracy.
 
 So a pass is never assumed, and doubt goes to a person. **The judge's accuracy hasn't been measured yet.** Nobody should rely on its verdicts until it has been checked against hand-marked results.
 
