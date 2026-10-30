@@ -39,6 +39,7 @@ An existing contract is never replaced without `--force`, because that would los
 | `extract.py` | Asks the model and sorts its suggestions |
 | `llm.py` | The model connection |
 | `generate.py` | Writes questions from approved items |
+| `target.py` | The target file, and talking to a bot |
 | `testcases.py` | The test file format |
 | `standard_packs.py` | Loads the fixed test packs in `packs/` |
 | `yaml_files.py`, `fields.py` | Shared file reading and field types |
@@ -146,4 +147,19 @@ It stops before any model call if:
 A reviewer can add a fact the model missed by writing a new item by hand, as long as its quote is really in the policy.
 
 A question that contains its own answer, such as "Is the limit £50?", is retried and then reported, because a bot could pass by repeating it. Approved items with no usable questions are listed, because those items aren't being tested.
+
+## Connecting to a bot
+
+A target file describes how to reach any bot with a web endpoint, so testing a new one needs no code. See [examples/targets/demo-bot.yaml](../examples/targets/demo-bot.yaml).
+
+| Field | What it does |
+|---|---|
+| `url` | Where to send questions. Must use `https` unless it's on this computer |
+| `request` | The JSON to send, with `{{question}}` where the question goes |
+| `reply_path` | Where the answer is in the response, such as `choices.0.message.content` |
+| `capture` | Anything else worth keeping, such as `tool_calls`, so tests can check what a bot did |
+| `token_env` | The name of an environment variable holding a token. Never the token itself |
+| `timeout_seconds` | How long to wait for the whole response, 60 by default |
+
+A bot is treated as untrusted. Redirects are never followed, so a bot can't send the token elsewhere. Responses over 1 MB are cut off. Timeouts, bad JSON, error codes and missing replies all become recorded failures, never crashes.
 

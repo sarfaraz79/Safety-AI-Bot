@@ -35,12 +35,12 @@ class Settings(BaseSettings):
     @field_validator("llm_base_url")
     @classmethod
     def _check_base_url_is_encrypted(cls, value: HttpUrl) -> HttpUrl:
-        if value.scheme != "https" and not _is_this_computer((value.host or "").strip("[]")):
+        if value.scheme != "https" and not is_this_computer((value.host or "").strip("[]")):
             raise ValueError("must use https unless it points at this computer.")
         return value
 
 
-def _is_this_computer(host: str) -> bool:
+def is_this_computer(host: str) -> bool:
     if host.lower() == "localhost":
         return True
     try:

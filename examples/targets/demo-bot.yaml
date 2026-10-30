@@ -1,0 +1,10 @@
+# How the engine reaches the demo bot. Start it first with `uv run demo-bot`.
+url: http://127.0.0.1:8000/chat
+request:
+  messages:
+    - role: user
+      content: "{{question}}"
+reply_path: reply
+capture:
+  tool_calls: tool_calls
+  sources: sources
