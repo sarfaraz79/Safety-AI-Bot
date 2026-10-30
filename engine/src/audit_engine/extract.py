@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from audit_engine.contract import MAX_ITEMS, Contract, Item
 from audit_engine.documents import Document, Section
-from audit_engine.llm import LLMClient
+from audit_engine.llm import LLMClient, without_code_fence
 from audit_engine.quotes import check_item
 from audit_engine.yaml_files import dump_yaml
 
@@ -114,18 +114,10 @@ async def _ask(section: Section, llm: LLMClient) -> list[_Proposal] | None:
         if len(reply) > MAX_REPLY_CHARS:
             continue
         try:
-            return _Reply.model_validate_json(_without_code_fence(reply)).items
+            return _Reply.model_validate_json(without_code_fence(reply)).items
         except ValidationError:
             continue
     return None
-
-
-def _without_code_fence(reply: str) -> str:
-    """Models sometimes wrap JSON in a Markdown code block, despite being asked not to."""
-    text = reply.strip()
-    if text.startswith("```") and text.endswith("```"):
-        return text.partition("\n")[2].removesuffix("```")
-    return text
 
 
 def _review(
