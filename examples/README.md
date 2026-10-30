@@ -1,5 +1,9 @@
 # Examples
 
+## targets/
+
+`demo-bot.yaml` tells the engine how to reach the demo bot. Any bot with a web endpoint can be described the same way, with no code.
+
 ## contracts/
 
 Contracts extracted by `audit-engine extract` from the demo bot's two current policies, `compensation_policy.md` and `delivery.md`, using `claude-haiku-5-5` on 30 October 2026. They are unedited and **nothing in them is approved**.
