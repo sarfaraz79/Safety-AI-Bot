@@ -15,9 +15,9 @@ One repo, organised as a uv workspace: each package has its own folder, dependen
 
 ```
 demo-bot/    test-target chatbot (done)
-engine/      audit engine: ingest, extract, generate, adapters, judge, report, store, cli (next)
+engine/      audit engine: ingest, extract, generate, adapters, judge, report, store, cli (in progress)
 packs/       standard test packs
-examples/    sample policies, contract.yaml, sample report
+examples/    sample contracts, later a sample report
 hosted/      phase 2: api, workers, watchers, impact, gate, web
 infra/       Terraform
 docs/        this file and decisions.md
@@ -59,7 +59,7 @@ Python 3.12+, uv workspace, FastAPI, Pydantic, Typer (engine CLI), httpx2, the o
 
 1. Repo, tooling, CI (done)
 2. Demo bot with planted flaws (done)
-3. extract + contract format + quote checking
+3. extract + contract format + quote checking (done; Markdown only so far)
 4. generate + run with the web-endpoint adapter
 5. judge + HTML report: demo ready for customer calls
 6. Weeks 2-4: measure the judge against about 150 hand-marked results; SQLite runs + diff; chat-log import; configurable adapters; README; open-source release
