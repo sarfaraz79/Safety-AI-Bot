@@ -5,7 +5,7 @@ import os
 import tempfile
 from collections.abc import Iterable
 from pathlib import Path
-from typing import NoReturn
+from typing import NoReturn, TextIO
 
 import typer
 from pydantic import ValidationError
@@ -88,6 +88,12 @@ def write_atomically(path: Path, text: str) -> None:
         with contextlib.suppress(OSError):
             Path(temporary).unlink()
         raise
+
+
+def open_for_this_user(path: Path) -> TextIO:
+    """For files written as results arrive. They can hold confidential answers."""
+    descriptor = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+    return os.fdopen(descriptor, "w", encoding="utf-8")
 
 
 def write_results(path: Path, text: str) -> None:
