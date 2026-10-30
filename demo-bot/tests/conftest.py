@@ -27,11 +27,6 @@ def isolated_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
 
 @pytest.fixture
-def anyio_backend() -> str:
-    return "asyncio"
-
-
-@pytest.fixture
 def make_settings() -> SettingsFactory:
     def factory(**overrides: object) -> Settings:
         return Settings.model_validate(

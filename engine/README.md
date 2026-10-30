@@ -2,7 +2,7 @@
 
 Tests a customer-facing AI agent against facts and rules taken from a company's own policy documents. The plan is in [docs/architecture.md](../docs/architecture.md).
 
-So far this package holds the contract format (`contract.py`), the Markdown reader (`documents.py`) and the evidence check (`quotes.py`). The `extract` command that produces contracts is still being built.
+So far this package holds the contract format (`contract.py`), the Markdown reader (`documents.py`), the evidence check (`quotes.py`) and extraction (`extract.py`, using `llm.py`). The `extract` command that runs them is still being built.
 
 ## Reading policy documents
 
@@ -56,3 +56,17 @@ items:
 A match can't begin or end inside a longer word or number, so "capped at £50" doesn't match "capped at £500", and "£1" doesn't match "£1,000".
 
 These checks prove the words exist, not that the statement reads them fairly. "refund is available" passes against "No refund is available", and a fact the model leaves out passes everything. Catching those is the job of the human review.
+
+## Extraction
+
+`extract.py` asks the model about one section at a time, then keeps only the items whose evidence holds up. The result has three parts, and all of them matter to the reviewer:
+
+| Part | What it holds |
+|---|---|
+| `contract` | Items that passed every check, all unapproved |
+| `rejected` | Suggestions that failed, each with the reason |
+| `failed_sections` | Sections with no usable reply after one retry, so the contract may be incomplete |
+
+- **The model can't approve anything.** It also can't choose an item's id or section, and anything extra it sends is ignored.
+- **Documents travel as data.** Each section is sent as JSON, so its text can't pretend to be the end of the document, and the model is told not to follow instructions inside it. This lowers the risk but can't remove it: a visible instruction in a policy has real words, so it can pass the quote check.
+- **A provider failure stops the run**, so an outage can't quietly leave a gap in a contract. A run that stops costs what it has already spent.

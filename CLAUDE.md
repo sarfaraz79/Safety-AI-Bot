@@ -34,6 +34,7 @@ Its flaws live in `demo-bot/src/demo_bot/data/` and are listed in `demo-bot/READ
 - Prefer the standard library. Add a dependency only with `uv add`, and say why.
 - Record significant decisions in `docs/decisions.md` (date, decision, reason).
 - When adding a package, add it to `[tool.uv.workspace]`, and its paths to ruff `src`, mypy `files`, pytest `testpaths` and coverage `source` in the root `pyproject.toml`.
+- Test file names must be unique across packages, because mypy sees them as one namespace. Fixtures that every package needs go in the root `conftest.py`.
 
 ## Working together
 
