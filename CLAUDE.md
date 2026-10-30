@@ -7,7 +7,7 @@ Read `docs/architecture.md` and `docs/decisions.md` at the start of each session
 The base for a change-control product for customer-facing AI agents (name not chosen yet; keep code names neutral). One repo, organised as a uv workspace. Each package has its own folder, `pyproject.toml` and tests:
 
 - `demo-bot/`: a support chatbot for a fictional courier, Example Parcels, used as the test target.
-- `engine/` (next): the audit engine.
+- `engine/` (in progress): the audit engine.
 
 ## The demo bot is flawed on purpose
 
