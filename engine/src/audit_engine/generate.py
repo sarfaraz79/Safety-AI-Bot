@@ -57,7 +57,7 @@ async def generate(
     contract: Contract, document: Document, llm: LLMClient, pack_cases: Sequence[Case] = ()
 ) -> GenerationResult:
     """Build a test file. A provider failure raises LLMError and stops the run."""
-    approved = _check_contract(contract, document)
+    approved = check_contract(contract, document)
     cases: list[Case] = []
     failed: list[str] = []
     for item in approved:
@@ -73,7 +73,7 @@ async def generate(
     )
 
 
-def _check_contract(contract: Contract, document: Document) -> list[Item]:
+def check_contract(contract: Contract, document: Document) -> list[Item]:
     """Refuse a contract whose review no longer applies, and return the approved items."""
     if contract.source != document.source:
         raise GenerateError(
