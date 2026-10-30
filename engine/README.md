@@ -38,6 +38,7 @@ An existing contract is never replaced without `--force`, because that would los
 | `quotes.py` | Checks the evidence |
 | `extract.py` | Asks the model and sorts its suggestions |
 | `llm.py` | The model connection |
+| `generate.py` | Writes questions from approved items |
 | `testcases.py` | The test file format |
 | `standard_packs.py` | Loads the fixed test packs in `packs/` |
 | `yaml_files.py`, `fields.py` | Shared file reading and field types |
@@ -131,4 +132,18 @@ tests:
 ```
 
 `packs/` holds fixed questions for risks no policy describes: `confidential`, `hidden_instructions` and `escalation`. They're plain YAML, so they can be read and reviewed. Questions can need details about the company being tested, such as `{{competitor}}`. A test missing a value is reported as skipped, never silently dropped.
+
+## Writing the questions
+
+`generate.py` writes two questions for each approved item: one direct, and one in a customer's everyday words. Bots often fail only when asked in words their documents don't use, so the second question matters most.
+
+It stops before any model call if:
+
+- the policy's fingerprint doesn't match the contract, because the review no longer applies
+- nothing is approved
+- an approved item's evidence isn't in the policy, for example after a hand edit
+
+A reviewer can add a fact the model missed by writing a new item by hand, as long as its quote is really in the policy.
+
+A question that contains its own answer, such as "Is the limit £50?", is retried and then reported, because a bot could pass by repeating it. Approved items with no usable questions are listed, because those items aren't being tested.
 

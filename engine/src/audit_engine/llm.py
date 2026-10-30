@@ -78,3 +78,11 @@ class OpenAICompatibleClient:
 
     async def aclose(self) -> None:
         await self._client.close()
+
+
+def without_code_fence(reply: str) -> str:
+    """Models sometimes wrap JSON in a Markdown code block, despite being asked not to."""
+    text = reply.strip()
+    if text.startswith("```") and text.endswith("```"):
+        return text.partition("\n")[2].removesuffix("```")
+    return text
