@@ -416,3 +416,85 @@ def test_a_policy_can_never_be_overwritten(
 
     assert result.exit_code == common.EXIT_FAILED
     assert policy.read_bytes() == before
+
+
+TARGET = """
+url: https://bot.example/chat
+request: {question: "{{question}}"}
+reply_path: reply
+capture: {tool_calls: tool_calls}
+actions: {hand_over: escalate_to_human}
+"""
+
+
+def write_hand_over_files(tmp_path: Path) -> tuple[Path, Path, Path]:
+    must_hand_over = case(1).model_copy(update={"requires_action": "hand_over"})
+    tests = tmp_path / "hand-over.yaml"
+    tests.write_text(render_cases(CaseFile(tests=[must_hand_over])), encoding="utf-8")
+    transcript = tmp_path / "hand-over.jsonl"
+    transcript.write_text(render_entry(entry(1, captured={"tool_calls": []})), encoding="utf-8")
+    target = tmp_path / "target.yaml"
+    target.write_text(TARGET, encoding="utf-8")
+    return tests, transcript, target
+
+
+@pytest.mark.usefixtures("configured")
+def test_a_target_lets_it_check_what_the_bot_did(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    llm = use_model(monkeypatch)
+    tests, transcript, target = write_hand_over_files(tmp_path)
+    output = tmp_path / "r.jsonl"
+
+    result = run(
+        "judge",
+        transcript,
+        "--tests",
+        tests,
+        "--policy",
+        "policy.md",
+        "--target",
+        target,
+        "-o",
+        output,
+    )
+
+    assert result.exit_code == 0
+    assert parse_results(output.read_text("utf-8"))[0][0].decided_by == "automatic"
+    assert llm.requests == []
+
+
+@pytest.mark.usefixtures("configured")
+def test_without_a_target_it_says_actions_went_unchecked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    use_model(monkeypatch, PASS)
+    tests, transcript, _ = write_hand_over_files(tmp_path)
+
+    result = run(
+        "judge", transcript, "--tests", tests, "--policy", "policy.md", "-o", tmp_path / "r.jsonl"
+    )
+
+    assert "couldn't be checked: 1" in result.output
+
+
+def test_a_target_can_never_be_overwritten(tmp_path: Path) -> None:
+    tests, transcript, target = write_hand_over_files(tmp_path)
+    before = target.read_bytes()
+
+    result = run(
+        "judge",
+        transcript,
+        "--tests",
+        tests,
+        "--policy",
+        "policy.md",
+        "--target",
+        target,
+        "-o",
+        target,
+        "--force",
+    )
+
+    assert result.exit_code == common.EXIT_FAILED
+    assert target.read_bytes() == before

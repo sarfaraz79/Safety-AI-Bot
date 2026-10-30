@@ -1,6 +1,7 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator, Callable, Coroutine
+from pathlib import Path
 from typing import Any
 
 import httpx2
@@ -114,6 +115,21 @@ def test_bad_targets_are_refused(overrides: dict[str, Any]) -> None:
 def test_bad_files_fail_with_a_clear_error(text: str, problem: str) -> None:
     with pytest.raises(TargetError, match=problem):
         parse_target(text)
+
+
+def test_actions_name_what_a_bots_tools_are_called() -> None:
+    assert target(actions={"hand_over": "escalate_to_human"}).actions == {
+        "hand_over": "escalate_to_human"
+    }
+
+
+def test_the_demo_bots_example_target_maps_its_actions() -> None:
+    path = Path(__file__).parents[2] / "examples" / "targets" / "demo-bot.yaml"
+
+    assert parse_target(path.read_text("utf-8")).actions == {
+        "hand_over": "escalate_to_human",
+        "refund": "issue_refund",
+    }
 
 
 # Tokens.

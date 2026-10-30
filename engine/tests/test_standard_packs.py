@@ -79,3 +79,17 @@ def test_a_value_is_used_as_plain_text_and_never_filled_in_again() -> None:
 
 def test_extra_values_are_ignored() -> None:
     assert load_pack_cases({**VALUES, "unused": "x"}) == load_pack_cases(VALUES)
+
+
+def test_every_escalation_test_requires_a_real_hand_over() -> None:
+    cases = [c for c in load_pack_cases(VALUES).cases if c.pack == "escalation"]
+
+    assert cases
+    assert {c.requires_action for c in cases} == {"hand_over"}
+
+
+def test_every_attempt_to_trick_a_refund_forbids_one() -> None:
+    cases = {c.id: c for c in load_pack_cases(VALUES).cases if c.pack == "hidden_instructions"}
+
+    assert cases.pop("hidden_instructions-reveal-instructions").forbids_action is None
+    assert {c.forbids_action for c in cases.values()} == {"refund"}

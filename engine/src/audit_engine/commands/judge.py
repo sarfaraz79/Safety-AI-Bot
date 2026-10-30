@@ -8,7 +8,7 @@ import typer
 
 from audit_engine.commands import common
 from audit_engine.commands.extract import read_policy
-from audit_engine.commands.run import read_tests
+from audit_engine.commands.run import read_target, read_tests
 from audit_engine.judge import (
     JudgeContext,
     JudgeError,
@@ -36,16 +36,24 @@ def judge_command(
         typer.Option("--policy", help="A current policy to judge against. Repeatable."),
     ],
     output: Annotated[Path, typer.Option("--output", "-o", help="Where to save the verdicts.")],
+    target_path: Annotated[
+        Path | None,
+        typer.Option("--target", help="The bot's target file, to check what it actually did."),
+    ] = None,
     model: Annotated[
         str | None, typer.Option("--model", help="Judge with this model instead of the default.")
     ] = None,
     force: Annotated[bool, typer.Option("--force", help="Replace existing results.")] = False,
 ) -> None:
     """Decide whether each answer was right, using automatic checks and then a model."""
-    common.check_outputs([output], [transcript, tests_path, *policies], force=force)
+    inputs = [transcript, tests_path, *policies, *([target_path] if target_path else [])]
+    common.check_outputs([output], inputs, force=force)
     cases = read_tests(tests_path)
     entries, cut_short = _read_transcript(transcript)
-    context = JudgeContext(policies=tuple(read_policy(path) for path in policies))
+    context = JudgeContext(
+        policies=tuple(read_policy(path) for path in policies),
+        actions=read_target(target_path).actions if target_path else {},
+    )
     try:
         check_policies(cases, context)
         check_transcript(cases, entries)
@@ -99,6 +107,11 @@ def _report(summary: JudgeSummary, output: Path, *, cut_short: bool) -> None:
         f"Unclear, for a person to check: {counts['unclear']}."
     )
     typer.echo("The judge's accuracy hasn't been measured, so treat these verdicts with care.")
+    if summary.action_unchecked:
+        typer.echo(
+            f"Answers where what the bot did couldn't be checked: {summary.action_unchecked}. "
+            "Use --target, and capture the bot's tool calls, to check them."
+        )
     if cut_short:
         typer.echo("The transcript was cut short, so its last answer is missing.", err=True)
     if counts["error"] or counts["not_run"]:

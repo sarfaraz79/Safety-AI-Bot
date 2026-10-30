@@ -36,6 +36,7 @@ class JudgedAnswer(BaseModel):
     decided_by: Literal["automatic", "model", "none"]
     reason: str
     offending_quote: str | None
+    action_unchecked: bool = False
 
     @model_validator(mode="after")
     def _check_failures_show_their_evidence(self) -> Self:

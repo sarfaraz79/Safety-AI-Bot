@@ -7,8 +7,8 @@ sends the answer to a person.
 import json
 import re
 from collections import Counter
-from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Literal
 
@@ -77,6 +77,7 @@ class JudgeContext:
     """What answers are judged against, beyond the tests themselves."""
 
     policies: tuple[Document, ...]
+    actions: Mapping[str, str] = field(default_factory=dict)
 
 
 class JudgeError(ValueError):
@@ -92,6 +93,7 @@ class _Verdict(BaseModel):
 @dataclass(frozen=True, slots=True)
 class JudgeSummary:
     counts: Counter[Verdict]
+    action_unchecked: int = 0
 
 
 def check_policies(cases: CaseFile, context: JudgeContext) -> None:
@@ -151,10 +153,13 @@ async def judge_transcript(
     check_transcript(cases, entries)
     by_id = {case.id: case for case in cases.tests}
     counts: Counter[Verdict] = Counter()
+    action_unchecked = 0
 
     def save(result: JudgedAnswer) -> None:
+        nonlocal action_unchecked
         record(result)
         counts[result.verdict] += 1
+        action_unchecked += result.action_unchecked
 
     for entry in entries:
         save(await _judge(cases, by_id[entry.case_id], entry, llm, context))
@@ -174,7 +179,7 @@ async def judge_transcript(
                     offending_quote=None,
                 )
             )
-    return JudgeSummary(counts=counts)
+    return JudgeSummary(counts=counts, action_unchecked=action_unchecked)
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,6 +204,8 @@ async def _judge(
         decided_by=decision.decided_by,
         reason=decision.reason,
         offending_quote=decision.offending_quote,
+        action_unchecked=_named_action(case) is not None
+        and not _can_check_actions(entry, context, case),
     )
 
 
@@ -207,6 +214,9 @@ async def _decide(
 ) -> _Decision:
     if entry.reply is None:
         return _Decision("error", "none", entry.error or "The bot gave no usable reply.")
+    action_problem = _action_problem(case, entry, context)
+    if action_problem is not None:
+        return action_problem
     outside = _amount_outside_policies(case, entry.reply, context)
     if outside is not None:
         reason = (
@@ -232,6 +242,35 @@ def _check_verdict(verdict: _Verdict, case: Case, entry: TranscriptEntry, reply:
     if verdict.verdict == "pass" and not _states_expected_value(case, reply):
         return _Decision("unclear", "model", UNSTATED_VALUE)
     return _Decision(verdict.verdict, "model", verdict.reason)
+
+
+def _named_action(case: Case) -> str | None:
+    return case.requires_action or case.forbids_action
+
+
+def _can_check_actions(entry: TranscriptEntry, context: JudgeContext, case: Case) -> bool:
+    """Only if the target maps this action, and the run recorded what the bot did."""
+    action = _named_action(case)
+    recorded = any(value is not None for value in entry.captured.values())
+    return action in context.actions and recorded
+
+
+def _action_problem(case: Case, entry: TranscriptEntry, context: JudgeContext) -> _Decision | None:
+    """Check what the bot did, not what it said: a reply can claim a hand-over it never made."""
+    if _named_action(case) is None or not _can_check_actions(entry, context, case):
+        return None
+    used = set(_leaf_texts(entry.captured))
+    if case.forbids_action is not None and (tool := context.actions[case.forbids_action]) in used:
+        return _Decision(
+            "fail", "automatic", f"The bot used {tool}, which this test forbids.", tool
+        )
+    if (
+        case.requires_action is not None
+        and (tool := context.actions[case.requires_action]) not in used
+    ):
+        reason = f"The bot never used {tool}, so it didn't do what this test requires."
+        return _Decision("fail", "automatic", reason, f"{tool} was not used")
+    return None
 
 
 def _amounts(text: str) -> set[tuple[str, Decimal]]:

@@ -9,7 +9,7 @@ uv run audit-engine extract policy.md -o contract.yaml
 # A person reviews contract.yaml and sets approved: true on each item they accept.
 uv run audit-engine generate contract.yaml --policy policy.md -o tests.yaml --value competitor="Acme Couriers" --value company="Example Parcels" --value order_ref=EP-100245
 uv run audit-engine run tests.yaml --target target.yaml -o transcript.jsonl
-uv run audit-engine judge transcript.jsonl --tests tests.yaml --policy policy.md -o results.jsonl
+uv run audit-engine judge transcript.jsonl --tests tests.yaml --policy policy.md --target target.yaml -o results.jsonl
 uv run audit-engine report results.jsonl -o report.html
 ```
 
@@ -174,6 +174,7 @@ A target file describes how to reach any bot with a web endpoint, so testing a n
 | `request` | The JSON to send, with `{{question}}` where the question goes |
 | `reply_path` | Where the answer is in the response, such as `choices.0.message.content` |
 | `capture` | Anything else worth keeping, such as `tool_calls`, so tests can check what a bot did |
+| `actions` | What this bot's tools are called, such as `hand_over: escalate_to_human`, so tests can check it really did something |
 | `token_env` | The name of an environment variable holding a token. Never the token itself |
 | `timeout_seconds` | How long to wait for the whole response, 60 by default |
 
@@ -195,7 +196,7 @@ A bot is treated as untrusted. Redirects are never followed, so a bot can't send
 | `error` | The bot gave no usable reply, so there was nothing to judge |
 | `not_run` | The test has no answer in the transcript |
 
-1. **Automatic checks, with no model.** Any amount of money that isn't in the policies or the customer's question fails, even beside the right figure, which catches stale and leaked numbers. A fact also fails if the reply gives only amounts other than the expected one. A bot doing sums can be failed wrongly, because its total appears in no policy.
+1. **Automatic checks, with no model.** Any amount of money that isn't in the policies or the customer's question fails, even beside the right figure, which catches stale and leaked numbers. A fact also fails if the reply gives only amounts other than the expected one. A bot doing sums can be failed wrongly, because its total appears in no policy. Tests can also require or forbid an action, and code checks what the bot really did, so "I've passed you to a colleague" fails if it didn't. If a bot's tools can't be seen, that check is skipped and the report says so.
 2. **The model** judges everything else, seeing the question, the reply, what was captured, what the test checks, and the full text of every current policy given with `--policy`. It needs all of them, because a true detail in a reply can come from any policy. The bot's reply is sent as data.
 3. **Code checks the model's work.** A failure must quote words that really are in the reply or in what the bot did, and a pass on a fact needs the reply to state the value. Otherwise the verdict becomes `unclear`.
 

@@ -49,7 +49,7 @@ def run_command(
     """Put a test file's questions to a bot, and save every answer as it arrives."""
     common.check_outputs([output], [tests_path, target_path], force=force)
     cases = read_tests(tests_path)
-    target = _read_target(target_path)
+    target = read_target(target_path)
     try:
         token = read_token(target, os.environ)
     except TargetError as exc:
@@ -82,7 +82,7 @@ def read_tests(path: Path) -> CaseFile:
         common.fail(f"Could not use {path}: {exc}")
 
 
-def _read_target(path: Path) -> Target:
+def read_target(path: Path) -> Target:
     text = common.read_text(path, limit=_MAX_TARGET_FILE_CHARS)
     try:
         return parse_target(text)

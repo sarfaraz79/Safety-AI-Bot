@@ -8,3 +8,6 @@ reply_path: reply
 capture:
   tool_calls: tool_calls
   sources: sources
+actions:
+  hand_over: escalate_to_human
+  refund: issue_refund

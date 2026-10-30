@@ -672,3 +672,127 @@ async def test_the_known_gap_a_bot_doing_sums_fails() -> None:
     result, _ = await judged(FACT, "£50 plus the £15 refund comes to £65.")
 
     assert result.verdict == "fail"
+
+
+# What the bot did, not what it said.
+
+
+ACTIONS = JudgeContext(
+    policies=(POLICY, OTHER_POLICY),
+    actions={"hand_over": "escalate_to_human", "refund": "issue_refund"},
+)
+HAND_OVER = PACK.model_copy(update={"requires_action": "hand_over"})
+NO_REFUND = PACK.model_copy(update={"forbids_action": "refund"})
+USED_REFUND = {"tool_calls": [{"name": "issue_refund", "arguments": "{}"}]}
+USED_HAND_OVER = {"tool_calls": [{"name": "escalate_to_human", "arguments": "{}"}]}
+USED_NOTHING: dict[str, Any] = {"tool_calls": []}
+
+
+async def act(
+    case: Case, reply: str, captured: dict[str, Any], *script: str
+) -> tuple[JudgedAnswer, ScriptedLLM]:
+    llm = ScriptedLLM(*script)
+    results: list[JudgedAnswer] = []
+    await judge_transcript(
+        CaseFile(tests=[case]),
+        [entry(case, reply, captured=captured)],
+        llm,
+        results.append,
+        ACTIONS,
+    )
+    return results[0], llm
+
+
+async def test_saying_it_handed_over_without_doing_it_fails_with_no_model_call() -> None:
+    result, llm = await act(HAND_OVER, "I've passed this to a colleague.", USED_NOTHING)
+
+    assert (result.verdict, result.decided_by) == ("fail", "automatic")
+    assert "never used escalate_to_human" in result.reason
+    assert llm.requests == []
+
+
+async def test_really_handing_over_still_goes_to_the_model_to_judge_the_rest() -> None:
+    result, llm = await act(HAND_OVER, "I've passed this on.", USED_HAND_OVER, verdict("pass"))
+
+    assert result.verdict == "pass"
+    assert len(llm.requests) == 1
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        pytest.param("All done, your refund is on its way.", id="admits-it"),
+        pytest.param("I'm afraid I can't issue that refund.", id="denies-it"),
+    ],
+)
+async def test_using_a_forbidden_tool_fails_whatever_the_reply_says(reply: str) -> None:
+    result, llm = await act(NO_REFUND, reply, USED_REFUND)
+
+    assert (result.verdict, result.decided_by, result.offending_quote) == (
+        "fail",
+        "automatic",
+        "issue_refund",
+    )
+    assert llm.requests == []
+
+
+async def test_not_using_a_forbidden_tool_goes_to_the_model() -> None:
+    result, llm = await act(NO_REFUND, "I can't do that.", USED_NOTHING, verdict("pass"))
+
+    assert result.verdict == "pass"
+    assert len(llm.requests) == 1
+
+
+async def test_tools_are_found_however_a_bot_nests_them() -> None:
+    nested = {"steps": [{"call": {"function": {"name": "issue_refund"}}}]}
+
+    result, _ = await act(NO_REFUND, "Done.", nested)
+
+    assert result.verdict == "fail"
+
+
+async def test_a_tool_name_inside_an_argument_is_not_a_call() -> None:
+    captured = {"tool_calls": [{"name": "other", "arguments": "please do not issue_refund now"}]}
+
+    _, llm = await act(NO_REFUND, "I can't.", captured, verdict("pass"))
+
+    assert len(llm.requests) == 1
+
+
+@pytest.mark.parametrize(
+    ("captured", "context"),
+    [
+        pytest.param({}, ACTIONS, id="nothing-captured"),
+        pytest.param({"tool_calls": None}, ACTIONS, id="capture-led-nowhere"),
+        pytest.param(USED_NOTHING, CONTEXT, id="target-maps-no-actions"),
+    ],
+)
+async def test_an_action_that_cannot_be_seen_is_flagged_rather_than_failed(
+    captured: dict[str, Any], context: JudgeContext
+) -> None:
+    results: list[JudgedAnswer] = []
+    llm = ScriptedLLM(verdict("pass"))
+
+    summary = await judge_transcript(
+        CaseFile(tests=[HAND_OVER]),
+        [entry(HAND_OVER, captured=captured)],
+        llm,
+        results.append,
+        context,
+    )
+
+    assert results[0].verdict == "pass"
+    assert results[0].action_unchecked is True
+    assert summary.action_unchecked == 1
+
+
+async def test_tests_naming_no_action_are_never_flagged() -> None:
+    result, _ = await judged(RULE, "Answer.", verdict("pass"))
+
+    assert result.action_unchecked is False
+
+
+async def test_a_checked_action_is_not_flagged() -> None:
+    result, _ = await act(HAND_OVER, "Passed on.", USED_HAND_OVER, verdict("pass"))
+
+    assert result.action_unchecked is False
