@@ -2,7 +2,43 @@
 
 Tests a customer-facing AI agent against facts and rules taken from a company's own policy documents. The plan is in [docs/architecture.md](../docs/architecture.md).
 
-So far this package holds the contract format (`contract.py`), the Markdown reader (`documents.py`), the evidence check (`quotes.py`) and extraction (`extract.py`, using `llm.py`). The `extract` command that runs them is still being built.
+So far it can read a policy and produce a contract. The later commands (`generate`, `run`, `judge`, `report`) aren't built yet.
+
+## Extract a contract
+
+Set the model in `.env` (see `.env.example`), then from the repo root:
+
+```sh
+uv run audit-engine extract path/to/policy.md -o contract.yaml
+```
+
+Use current policies only. A stale document would make its out-of-date facts "correct", and the engine couldn't catch a bot repeating them.
+
+This writes two files, and each section costs one model call:
+
+| File | What it holds |
+|---|---|
+| `contract.yaml` | Items for a person to review, all unapproved |
+| `contract.rejected.yaml` | Suggestions that failed their checks, and sections with no usable reply |
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Finished. Rejected suggestions may still be worth a look |
+| 1 | Failed, and nothing was written |
+| 3 | Written, but incomplete because some sections had no usable reply |
+
+An existing contract is never replaced without `--force`, because that would lose its approvals. These mistakes are all caught before any money is spent.
+
+| Code | Job |
+|---|---|
+| `cli.py` | The command |
+| `config.py` | Settings |
+| `contract.py` | The contract format |
+| `documents.py` | Reads Markdown |
+| `quotes.py` | Checks the evidence |
+| `extract.py` | Asks the model and sorts its suggestions |
+| `llm.py` | The model connection |
+| `testing.py` | `ScriptedLLM`, a stand-in model for tests |
 
 ## Reading policy documents
 
