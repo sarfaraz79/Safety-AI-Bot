@@ -1,32 +1,18 @@
 """The contract: what a policy document says, with the source quote for every item."""
 
-from collections.abc import Hashable
-from typing import Annotated, Literal, Self
+from typing import Literal, Self
 
-import yaml
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError, model_validator
-from yaml.nodes import MappingNode
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from audit_engine.fields import Text
+from audit_engine.yaml_files import YamlFileError, dump_yaml, load_model
 
 MAX_CONTRACT_CHARS = 2_000_000
 MAX_ITEMS = 5_000
 
 
-class ContractError(ValueError):
-    """A contract can't be read. The message never quotes the file, which may be sensitive."""
-
-
-def _check_encodable(text: str) -> str:
-    text.encode()  # broken Unicode raises here, and could never be saved to a file
-    return text
-
-
-def _check_not_blank(text: str) -> str:
-    if not text.strip():
-        raise ValueError("must not be blank.")
-    return text
-
-
-_Text = Annotated[str, AfterValidator(_check_encodable), AfterValidator(_check_not_blank)]
+class ContractError(YamlFileError):
+    """A contract can't be read."""
 
 
 class _ContractModel(BaseModel):
@@ -34,17 +20,17 @@ class _ContractModel(BaseModel):
 
 
 class Source(_ContractModel):
-    document: _Text = Field(max_length=300, pattern=r"^[^/\\]+$")
+    document: Text = Field(max_length=300, pattern=r"^[^/\\]+$")
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class Item(_ContractModel):
     id: str = Field(max_length=300, pattern=r"^[A-Za-z0-9_.-]+$")
     kind: Literal["fact", "rule"]
-    statement: _Text = Field(max_length=1_000)
-    value: _Text | None = Field(default=None, max_length=200)
-    section: _Text = Field(max_length=300)
-    quote: _Text = Field(max_length=4_000)
+    statement: Text = Field(max_length=1_000)
+    value: Text | None = Field(default=None, max_length=200)
+    section: Text = Field(max_length=300)
+    quote: Text = Field(max_length=4_000)
     approved: bool = Field(default=False, strict=True)
 
     @model_validator(mode="after")
@@ -68,45 +54,12 @@ class Contract(_ContractModel):
         return self
 
 
-class _StrictLoader(yaml.SafeLoader):
-    """Safe loading that also refuses duplicate keys and merge keys (`<<`).
-
-    By default the last key wins, so a second `approved: true` would silently overrule the first.
-    """
-
-    def construct_mapping(self, node: MappingNode, deep: bool = False) -> dict[Hashable, object]:
-        keys = [self.construct_object(key_node, deep=True) for key_node, _ in node.value]
-        if len(set(map(str, keys))) != len(keys):
-            raise ContractError("The contract repeats a key.")
-        return super().construct_mapping(node, deep=deep)
-
-
 def render_contract(contract: Contract) -> str:
-    """Write a contract as YAML, with its fields in reading order."""
-    return yaml.safe_dump(
-        contract.model_dump(exclude_none=True),
-        allow_unicode=True,
-        sort_keys=False,
-        width=100,
-    )
+    return dump_yaml(contract.model_dump(exclude_none=True))
 
 
 def parse_contract(text: str) -> Contract:
     """Read and check a contract. Raises ContractError if anything is wrong with it."""
-    if len(text) > MAX_CONTRACT_CHARS:
-        raise ContractError(f"The contract is longer than {MAX_CONTRACT_CHARS} characters.")
-    try:
-        data: object = yaml.load(text, Loader=_StrictLoader)  # noqa: S506 (it extends SafeLoader)
-    except (yaml.YAMLError, RecursionError):
-        raise ContractError("The contract is not valid YAML.") from None
-    try:
-        return Contract.model_validate(data)
-    except ValidationError as exc:
-        raise ContractError(_describe_problems(exc)) from None
-
-
-def _describe_problems(exc: ValidationError) -> str:
-    return "\n".join(
-        f"{'.'.join(map(str, error['loc'])) or 'contract'}: {error['msg']}"
-        for error in exc.errors(include_url=False, include_input=False)
+    return load_model(
+        text, Contract, name="contract", max_chars=MAX_CONTRACT_CHARS, error=ContractError
     )

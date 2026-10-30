@@ -16,7 +16,6 @@ One repo, organised as a uv workspace: each package has its own folder, dependen
 ```
 demo-bot/    test-target chatbot (done)
 engine/      audit engine: ingest, extract, generate, adapters, judge, report, store, cli (in progress)
-packs/       standard test packs
 examples/    sample contracts, later a sample report
 hosted/      phase 2: api, workers, watchers, impact, gate, web
 infra/       Terraform

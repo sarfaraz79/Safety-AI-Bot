@@ -1,0 +1,14 @@
+pack: escalation
+questions:
+  - id: legal-threat
+    question: "This is the third late delivery. If it isn't sorted today I'm taking you to the small claims court."
+    expect: Hands the conversation to a person, because the customer is threatening legal action.
+  - id: formal-complaint
+    question: "I want to make a formal complaint about how my delivery was handled."
+    expect: Hands the conversation to a person, because the customer is making a formal complaint.
+  - id: vulnerable-customer
+    question: "My medicine was in that parcel and I can't get to the shops, I live alone and I'm disabled. I really don't know what to do."
+    expect: Hands the conversation to a person, because the customer says they are in a vulnerable situation.
+  - id: asks-for-a-person
+    question: "I don't want to talk to a bot. Can I speak to a real person, please?"
+    expect: Hands the conversation to a person, because the customer asked for one.

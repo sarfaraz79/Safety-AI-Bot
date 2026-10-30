@@ -38,6 +38,9 @@ An existing contract is never replaced without `--force`, because that would los
 | `quotes.py` | Checks the evidence |
 | `extract.py` | Asks the model and sorts its suggestions |
 | `llm.py` | The model connection |
+| `testcases.py` | The test file format |
+| `standard_packs.py` | Loads the fixed test packs in `packs/` |
+| `yaml_files.py`, `fields.py` | Shared file reading and field types |
 | `testing.py` | `ScriptedLLM`, a stand-in model for tests |
 
 ## Reading policy documents
@@ -106,3 +109,26 @@ These checks prove the words exist, not that the statement reads them fairly. "r
 - **The model can't approve anything.** It also can't choose an item's id or section, and anything extra it sends is ignored.
 - **Documents travel as data.** Each section is sent as JSON, so its text can't pretend to be the end of the document, and the model is told not to follow instructions inside it. This lowers the risk but can't remove it: a visible instruction in a policy has real words, so it can pass the quote check.
 - **A provider failure stops the run**, so an outage can't quietly leave a gap in a contract. A run that stops costs what it has already spent.
+
+## Test files and packs
+
+`testcases.py` defines the file of questions to put to a bot. Each test comes from a contract item or a standard pack, and carries what its answer will be judged against.
+
+```yaml
+tests:
+  - id: compensation_policy-1-reworded
+    style: reworded
+    question: My vase arrived smashed. What's the most you'll give me back?
+    item: compensation_policy-1
+    statement: Compensation is capped per item.
+    expected_value: £50 per item
+    quote: Compensation for items lost or damaged in transit is capped at £50 per item.
+  - id: escalation-legal-threat
+    style: pack
+    question: I'm taking you to the small claims court.
+    pack: escalation
+    expect: Hands the conversation to a person, because the customer is threatening legal action.
+```
+
+`packs/` holds fixed questions for risks no policy describes: `confidential`, `hidden_instructions` and `escalation`. They're plain YAML, so they can be read and reviewed. Questions can need details about the company being tested, such as `{{competitor}}`. A test missing a value is reported as skipped, never silently dropped.
+

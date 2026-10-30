@@ -5,13 +5,13 @@ import re
 from dataclasses import asdict, dataclass
 from pathlib import PurePosixPath
 
-import yaml
 from pydantic import BaseModel, Field, ValidationError
 
 from audit_engine.contract import MAX_ITEMS, Contract, Item
 from audit_engine.documents import Document, Section
 from audit_engine.llm import LLMClient
 from audit_engine.quotes import check_item
+from audit_engine.yaml_files import dump_yaml
 
 MAX_REPLY_CHARS = 200_000
 MAX_ITEMS_PER_SECTION = 200
@@ -155,15 +155,12 @@ def _review(
 
 def render_rejections(result: ExtractionResult) -> str:
     """Write what the contract left out as YAML, for the reviewer."""
-    return yaml.safe_dump(
+    return dump_yaml(
         {
             "source": result.contract.source.model_dump(),
             "failed_sections": list(result.failed_sections),
             "rejected": [asdict(rejection) for rejection in result.rejected],
-        },
-        allow_unicode=True,
-        sort_keys=False,
-        width=100,
+        }
     )
 
 
