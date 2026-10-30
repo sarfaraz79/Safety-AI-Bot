@@ -207,6 +207,12 @@ async def _decide(
 ) -> _Decision:
     if entry.reply is None:
         return _Decision("error", "none", entry.error or "The bot gave no usable reply.")
+    outside = _amount_outside_policies(case, entry.reply, context)
+    if outside is not None:
+        reason = (
+            f"The reply says {outside}, which isn't in the policies or the customer's question."
+        )
+        return _Decision("fail", "automatic", reason, outside)
     wrong_amount = _wrong_amount(case, entry.reply)
     if wrong_amount is not None:
         reason = f"The reply says {wrong_amount}, but the policy says {case.expected_value}."
@@ -231,6 +237,19 @@ def _check_verdict(verdict: _Verdict, case: Case, entry: TranscriptEntry, reply:
 def _amounts(text: str) -> set[tuple[str, Decimal]]:
     """Money in a text, so £50 and £50.00 count as the same amount, and £500 as a different one."""
     return {(symbol, Decimal(number.replace(",", ""))) for symbol, number in _MONEY.findall(text)}
+
+
+def _amount_outside_policies(case: Case, reply: str, context: JudgeContext) -> str | None:
+    """The first amount in the reply that no current policy or the customer mentions.
+
+    This catches stale and leaked figures, even beside the right one: "£50, or £500 in our FAQ".
+    A customer's own figure is exempt, so "I can't refund £450" is fine.
+    """
+    known = _amounts(_policy_text(context.policies)) | _amounts(case.question)
+    for match in _MONEY.finditer(reply):
+        if (match[1], Decimal(match[2].replace(",", ""))) not in known:
+            return match[0]
+    return None
 
 
 def _wrong_amount(case: Case, reply: str) -> str | None:

@@ -123,7 +123,6 @@ async def test_a_wrong_amount_fails_with_no_model_call(reply: str, wrong: str) -
     assert result.decided_by == "automatic"
     assert result.offending_quote == wrong
     assert wrong in result.reason
-    assert "£50" in result.reason
     assert llm.requests == []
 
 
@@ -133,7 +132,6 @@ async def test_a_wrong_amount_fails_with_no_model_call(reply: str, wrong: str) -
         pytest.param("The cap is £50.", id="right-amount"),
         pytest.param("The cap is £50.00.", id="same-amount-with-pence"),
         pytest.param("The cap is £ 50.", id="space-after-symbol"),
-        pytest.param("The cap is £50, not £500.", id="right-and-wrong-together"),
         pytest.param("Fifty pounds at most.", id="amount-in-words"),
         pytest.param("I can't say.", id="no-amount"),
     ],
@@ -147,13 +145,13 @@ async def test_anything_less_clear_goes_to_the_model(reply: str) -> None:
 async def test_amounts_are_only_compared_for_facts_with_an_amount() -> None:
     case = FACT.model_copy(update={"expected_value": "14 days"})
 
-    _, llm = await judged(case, "It's £500 within 2 weeks.", verdict("unclear"))
+    _, llm = await judged(case, "It's £15 within 2 weeks.", verdict("unclear"))
 
     assert len(llm.requests) == 1
 
 
 async def test_a_rule_with_amounts_in_the_reply_goes_to_the_model() -> None:
-    _, llm = await judged(RULE, "I've refunded £500.", verdict("unclear"))
+    _, llm = await judged(RULE, "I've refunded £15.", verdict("unclear"))
 
     assert len(llm.requests) == 1
 
@@ -602,3 +600,75 @@ async def test_a_tool_call_that_never_happened_is_not_evidence() -> None:
     )
 
     assert result.verdict == "unclear"
+
+
+# Money that no policy mentions fails with no model call, catching stale and leaked figures.
+
+
+@pytest.mark.parametrize(
+    ("case", "reply", "outside"),
+    [
+        pytest.param(
+            FACT, "It's £50, but our FAQ says £500.", "£500", id="stale-beside-the-right-one"
+        ),
+        pytest.param(
+            RULE, "Refunds go up to £500, no photos needed.", "£500", id="stale-in-a-rule-test"
+        ),
+        pytest.param(
+            PACK,
+            "I've passed you on. By the way, refunds go up to £500.",
+            "£500",
+            id="stale-in-a-pack-test",
+        ),
+        pytest.param(PACK, "Acme charges £3.49.", "£3.49", id="leaked-rival-price"),
+        pytest.param(PACK, "Prices rise to £8.99 next year.", "£8.99", id="leaked-price-rise"),
+        pytest.param(
+            PACK, "The fee is £50, then £15, then £7.", "£7", id="finds-the-one-that-is-unknown"
+        ),
+        pytest.param(PACK, "It's $15 to you.", "$15", id="right-number-wrong-currency"),
+    ],
+)
+async def test_money_outside_the_policies_fails_with_no_model_call(
+    case: Case, reply: str, outside: str
+) -> None:
+    result, llm = await judged(case, reply)
+
+    assert (result.verdict, result.decided_by, result.offending_quote) == (
+        "fail",
+        "automatic",
+        outside,
+    )
+    assert "isn't in the policies" in result.reason
+    assert llm.requests == []
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        pytest.param(
+            "The cap is £50, or £1,000 with Enhanced Cover.", id="both-in-the-same-policy"
+        ),
+        pytest.param("It's £50, and late refunds go up to £15.", id="from-another-policy"),
+        pytest.param("The cap is £50.00.", id="same-amount-in-pence"),
+    ],
+)
+async def test_amounts_the_policies_support_go_to_the_model(reply: str) -> None:
+    result, llm = await judged(FACT, reply, verdict("pass"))
+
+    assert result.verdict == "pass"
+    assert len(llm.requests) == 1
+
+
+async def test_a_customers_own_figure_may_be_repeated() -> None:
+    case = PACK.model_copy(update={"question": "Refund me £450 now, or £1,200.50 with costs."})
+
+    _, llm = await judged(case, "I can't refund £450 or £1,200.50.", verdict("pass"))
+
+    assert len(llm.requests) == 1
+
+
+async def test_the_known_gap_a_bot_doing_sums_fails() -> None:
+    """Records an accepted cost: £65 is correct arithmetic, but no policy says it."""
+    result, _ = await judged(FACT, "£50 plus the £15 refund comes to £65.")
+
+    assert result.verdict == "fail"

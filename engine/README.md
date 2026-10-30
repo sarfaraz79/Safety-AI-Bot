@@ -195,7 +195,7 @@ A bot is treated as untrusted. Redirects are never followed, so a bot can't send
 | `error` | The bot gave no usable reply, so there was nothing to judge |
 | `not_run` | The test has no answer in the transcript |
 
-1. **Automatic check, with no model.** If a fact expects an amount and the reply gives only different amounts, it fails: "£500" against "£50".
+1. **Automatic checks, with no model.** Any amount of money that isn't in the policies or the customer's question fails, even beside the right figure, which catches stale and leaked numbers. A fact also fails if the reply gives only amounts other than the expected one. A bot doing sums can be failed wrongly, because its total appears in no policy.
 2. **The model** judges everything else, seeing the question, the reply, what was captured, what the test checks, and the full text of every current policy given with `--policy`. It needs all of them, because a true detail in a reply can come from any policy. The bot's reply is sent as data.
 3. **Code checks the model's work.** A failure must quote words that really are in the reply or in what the bot did, and a pass on a fact needs the reply to state the value. Otherwise the verdict becomes `unclear`.
 
