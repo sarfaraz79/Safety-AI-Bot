@@ -1,10 +1,11 @@
-"""The command line: `audit-engine extract`, `generate`, `run` and `judge`."""
+"""The command line: `audit-engine extract`, `generate`, `run`, `judge` and `report`."""
 
 import typer
 
 from audit_engine.commands.extract import extract_command
 from audit_engine.commands.generate import generate_command
 from audit_engine.commands.judge import judge_command
+from audit_engine.commands.report import report_command
 from audit_engine.commands.run import run_command
 
 # Pretty exceptions print local variables, which would include the API key.
@@ -13,6 +14,7 @@ app.command("extract")(extract_command)
 app.command("generate")(generate_command)
 app.command("run")(run_command)
 app.command("judge")(judge_command)
+app.command("report")(report_command)
 
 
 @app.callback()

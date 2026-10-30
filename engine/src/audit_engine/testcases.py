@@ -32,13 +32,14 @@ class Case(_CaseModel):
     statement: Text | None = Field(default=None, max_length=1_000)
     expected_value: Text | None = Field(default=None, max_length=200)
     quote: Text | None = Field(default=None, max_length=4_000)
+    section: Text | None = Field(default=None, max_length=300)
     # For a standard pack:
     pack: str | None = Field(default=None, max_length=100, pattern=r"^[a-z_]+$")
     expect: Text | None = Field(default=None, max_length=1_000)
 
     @model_validator(mode="after")
     def _check_fields_match_style(self) -> Self:
-        from_item = (self.item, self.statement, self.expected_value, self.quote)
+        from_item = (self.item, self.statement, self.expected_value, self.quote, self.section)
         from_pack = (self.pack, self.expect)
         if self.style == "pack":
             if None in from_pack or any(field is not None for field in from_item):

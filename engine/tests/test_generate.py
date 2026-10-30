@@ -81,6 +81,7 @@ async def test_writes_two_questions_per_approved_item(document: Document) -> Non
     assert reworded.statement == "Compensation is capped per item."
     assert reworded.expected_value == "£50"
     assert reworded.quote == CAP_QUOTE
+    assert reworded.section == "Lost or damaged items"
     assert result.cases.source == document.source
     assert result.failed_items == ()
 

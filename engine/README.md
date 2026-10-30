@@ -10,9 +10,10 @@ uv run audit-engine extract policy.md -o contract.yaml
 uv run audit-engine generate contract.yaml --policy policy.md -o tests.yaml --value competitor="Acme Couriers" --value company="Example Parcels" --value order_ref=EP-100245
 uv run audit-engine run tests.yaml --target target.yaml -o transcript.jsonl
 uv run audit-engine judge transcript.jsonl --tests tests.yaml -o results.jsonl
+uv run audit-engine report results.jsonl -o report.html
 ```
 
-`report`, which presents the results, isn't built yet. When a run covers several policies, pass `--no-packs` for all but one, so the pack questions aren't asked twice.
+When a run covers several policies, pass `--no-packs` for all but one, so the pack questions aren't asked twice.
 
 A target's token is read from the environment, not from `.env`, so a bot's credentials and the engine's model key stay separate.
 
@@ -51,6 +52,7 @@ An existing contract is never replaced without `--force`, because that would los
 | `extract.py` | Asks the model and sorts its suggestions |
 | `llm.py` | The model connection |
 | `generate.py` | Writes questions from approved items |
+| `report.py`, `templates/` | Presents the verdicts |
 | `judge.py`, `results.py` | Decides whether each answer was right |
 | `run.py`, `transcripts.py` | Asks the questions and saves the answers |
 | `target.py` | The target file, and talking to a bot |
@@ -198,4 +200,18 @@ A bot is treated as untrusted. Redirects are never followed, so a bot can't send
 3. **Code checks the model's work.** A failure must quote words that really are in the reply or in what the bot did, and a pass on a fact needs the reply to state the value. Otherwise the verdict becomes `unclear`.
 
 So a pass is never assumed, and doubt goes to a person. **The judge's accuracy hasn't been measured yet.** Nobody should rely on its verdicts until it has been checked against hand-marked results.
+
+## The report
+
+`report.py` turns verdicts into an HTML page and a JSON file. It needs no model or key.
+
+Each failed test shows the customer's question, the bot's reply, the problem, what the bot did, why it failed, what the policy says, the source, and how often it happened. A test with any failure counts as failed, however rare, because a failure in one answer out of twenty can still reach a customer.
+
+| Severity | When |
+|---|---|
+| Critical | The bot did something wrong, such as calling a tool, not only saying something wrong |
+| High | A wrong amount of money, or a failure in a standard pack |
+| Medium | Any other failure |
+
+A bot's reply is untrusted, and could contain a script. Everything on the page is escaped, it has no JavaScript, and it can't load anything from elsewhere. Every report says the judge's accuracy hasn't been measured, until it has.
 

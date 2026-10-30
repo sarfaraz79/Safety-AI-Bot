@@ -137,6 +137,7 @@ def _to_cases(item: Item, questions: _Reply) -> tuple[Case, Case]:
                 "statement": item.statement,
                 "expected_value": item.value,
                 "quote": item.quote,
+                "section": item.section,
             }
         )
 
