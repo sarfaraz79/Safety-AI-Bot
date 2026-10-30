@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<title>Audit report</title>
+<style>
+:root {
+  --page: #f7f7f5; --panel: #ffffff; --ink: #1c1c1a; --muted: #5d5d58; --line: #dcdcd6;
+  --critical: #a4161a; --high: #b45309; --medium: #4b5563; --good: #166534; --warn-bg: #fff4e0;
+  --warn-ink: #7a4a00; --quote-bg: #fde8e8; --quote-ink: #8a1115;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: #161614; --panel: #20201d; --ink: #ecece6; --muted: #a8a8a0; --line: #3a3a35;
+    --critical: #f87171; --high: #fbbf24; --medium: #9ca3af; --good: #4ade80; --warn-bg: #33270f;
+    --warn-ink: #fcd38a; --quote-bg: #3d1a1a; --quote-ink: #fca5a5;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 32px 16px 64px; background: var(--page); color: var(--ink);
+  font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+main { max-width: 860px; margin: 0 auto; }
+h1 { margin: 0 0 4px; font-size: 28px; }
+h2 { margin: 40px 0 12px; font-size: 20px; }
+.meta { margin: 0; color: var(--muted); font-size: 14px; }
+.notice {
+  margin: 20px 0; padding: 12px 16px; border-radius: 8px; background: var(--warn-bg);
+  color: var(--warn-ink); font-size: 15px;
+}
+.totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 12px; }
+.total { padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.total b { display: block; font-size: 26px; line-height: 1.2; }
+.total span { color: var(--muted); font-size: 14px; }
+.test {
+  margin: 0 0 16px; padding: 18px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel);
+}
+.test h3 { margin: 0 0 10px; font-size: 16px; overflow-wrap: anywhere; }
+.badge {
+  display: inline-block; margin-right: 8px; padding: 1px 8px; border-radius: 99px;
+  color: #fff; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em;
+}
+@media (prefers-color-scheme: dark) { .badge { color: #161614; } }
+.badge.critical { background: var(--critical); }
+.badge.high { background: var(--high); }
+.badge.medium { background: var(--medium); }
+dl { margin: 0; }
+dt { margin-top: 10px; color: var(--muted); font-size: 13px; font-weight: 600; }
+dd { margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+dd.quote { padding: 2px 8px; border-radius: 4px; background: var(--quote-bg); color: var(--quote-ink); }
+code { font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+ul.plain { margin: 0; padding-left: 20px; color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
+.empty { color: var(--good); }
+</style>
+</head>
+<body>
+<main>
+<h1>Audit report</h1>
+<p class="meta">
+  {% if report.source %}Policy: {{ report.source.document }}. {% endif %}
+  Generated {{ report.generated_at.strftime("%-d %B %Y, %H:%M %Z") }}.
+</p>
+
+<p class="notice"><strong>Treat these verdicts with care.</strong> The AI judge's accuracy hasn't been measured against hand-marked results yet. A pass here isn't proof that a bot is safe.</p>
+{% if report.cut_short %}
+<p class="notice"><strong>This report is incomplete.</strong> The results file was cut short, so its last verdict is missing.</p>
+{% endif %}
+
+<section class="totals" aria-label="Totals">
+  <div class="total"><b>{{ report.totals.tests }}</b><span>Tests</span></div>
+  <div class="total"><b>{{ report.totals.counts.get("fail", 0) }}</b><span>Failed answers</span></div>
+  <div class="total"><b>{{ report.totals.counts.get("pass", 0) }}</b><span>Passed answers</span></div>
+  <div class="total"><b>{{ report.totals.counts.get("unclear", 0) }}</b><span>For a person to check</span></div>
+  <div class="total"><b>{{ report.totals.counts.get("error", 0) + report.totals.counts.get("not_run", 0) }}</b><span>Not judged</span></div>
+</section>
+
+{% macro show(summary, verdict) %}
+<article class="test">
+  <h3>
+    {% if summary.severity %}<span class="badge {{ summary.severity }}">{{ summary.severity }}</span>{% endif %}
+    {{ summary.case.id }}
+  </h3>
+  <dl>
+    <dt>Customer asked</dt>
+    <dd>{{ summary.case.question }}</dd>
+    {% if summary.example %}
+    {% if summary.example.reply is not none %}
+    <dt>Bot replied</dt>
+    <dd>{{ summary.example.reply }}</dd>
+    {% endif %}
+    {% if summary.example.offending_quote %}
+    <dt>The problem</dt>
+    <dd class="quote">{{ summary.example.offending_quote }}</dd>
+    {% endif %}
+    {% if summary.example.actions %}
+    <dt>What the bot did</dt>
+    <dd><code>{{ summary.example.actions | tojson(indent=2) }}</code></dd>
+    {% endif %}
+    <dt>Why</dt>
+    <dd>{{ summary.example.reason }}</dd>
+    {% endif %}
+    {% if summary.case.statement %}
+    <dt>What the policy says</dt>
+    <dd>{{ summary.case.statement }}{% if summary.case.expected_value %} (Expected: {{ summary.case.expected_value }}){% endif %}</dd>
+    <dt>Source{% if report.source %}: {{ report.source.document }}{% endif %}{% if summary.case.section %}, {{ summary.case.section }}{% endif %}</dt>
+    <dd>{{ summary.case.quote }}</dd>
+    {% endif %}
+    {% if summary.case.expect %}
+    <dt>What a good bot does</dt>
+    <dd>{{ summary.case.expect }}</dd>
+    {% endif %}
+    {% if verdict %}
+    <dt>How often</dt>
+    <dd>{{ summary.counts.get(verdict, 0) }} of {{ summary.answers }} answers</dd>
+    {% endif %}
+  </dl>
+</article>
+{% endmacro %}
+
+<h2>Failed tests ({{ report.failed | length }})</h2>
+{% for summary in report.failed %}{{ show(summary, "fail") }}{% else %}
+<p class="empty">No test failed.</p>
+{% endfor %}
+
+{% if report.unclear %}
+<h2>For a person to check ({{ report.unclear | length }})</h2>
+{% for summary in report.unclear %}{{ show(summary, "unclear") }}{% endfor %}
+{% endif %}
+
+{% if report.gaps %}
+<h2>Not judged ({{ report.gaps | length }})</h2>
+{% for summary in report.gaps %}{{ show(summary, none) }}{% endfor %}
+{% endif %}
+
+<h2>Passed tests ({{ report.passed | length }})</h2>
+{% if report.passed %}
+<ul class="plain">
+{% for summary in report.passed %}<li>{{ summary.case.id }} ({{ summary.answers }} of {{ summary.answers }} answers)</li>
+{% endfor %}</ul>
+{% else %}
+<p class="meta">None.</p>
+{% endif %}
+</main>
+</body>
+</html>

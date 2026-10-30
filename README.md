@@ -26,7 +26,7 @@ Re-tests customer-facing AI agents whenever their knowledge, prompts, model or t
 | Command | What it does |
 |---|---|
 | `uv run demo-bot` | Starts the bot at http://127.0.0.1:8000 (try it at `/docs`) |
-| `uv run audit-engine extract policy.md -o contract.yaml` | Lists a policy's facts and rules for review ([details](engine/README.md)) |
+| `uv run audit-engine ...` | The audit engine: `extract`, `generate`, `run`, `judge` and `report` ([details](engine/README.md)) |
 | `uv run pytest --cov` | Runs the tests; coverage must stay at 95% or more |
 | `uv run ruff format .` | Formats the code |
 | `uv run ruff check .` | Lints, including security rules |
