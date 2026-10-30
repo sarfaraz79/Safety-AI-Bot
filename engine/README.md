@@ -2,7 +2,20 @@
 
 Tests a customer-facing AI agent against facts and rules taken from a company's own policy documents. The plan is in [docs/architecture.md](../docs/architecture.md).
 
-So far it can read a policy and produce a contract. The later commands (`generate`, `run`, `judge`, `report`) aren't built yet.
+It works in steps, with a person reviewing the contract in the middle:
+
+```sh
+uv run audit-engine extract policy.md -o contract.yaml
+# A person reviews contract.yaml and sets approved: true on each item they accept.
+uv run audit-engine generate contract.yaml --policy policy.md -o tests.yaml --value competitor="Acme Couriers" --value company="Example Parcels" --value order_ref=EP-100245
+uv run audit-engine run tests.yaml --target target.yaml -o transcript.jsonl
+uv run audit-engine judge transcript.jsonl --tests tests.yaml -o results.jsonl
+uv run audit-engine report results.jsonl -o report.html
+```
+
+When a run covers several policies, pass `--no-packs` for all but one, so the pack questions aren't asked twice.
+
+A target's token is read from the environment, not from `.env`, so a bot's credentials and the engine's model key stay separate.
 
 ## Extract a contract
 
@@ -31,7 +44,7 @@ An existing contract is never replaced without `--force`, because that would los
 
 | Code | Job |
 |---|---|
-| `cli.py` | The command |
+| `cli.py`, `commands/` | The commands, one file each |
 | `config.py` | Settings |
 | `contract.py` | The contract format |
 | `documents.py` | Reads Markdown |
@@ -39,6 +52,9 @@ An existing contract is never replaced without `--force`, because that would los
 | `extract.py` | Asks the model and sorts its suggestions |
 | `llm.py` | The model connection |
 | `generate.py` | Writes questions from approved items |
+| `report.py`, `templates/` | Presents the verdicts |
+| `judge.py`, `results.py` | Decides whether each answer was right |
+| `run.py`, `transcripts.py` | Asks the questions and saves the answers |
 | `target.py` | The target file, and talking to a bot |
 | `testcases.py` | The test file format |
 | `standard_packs.py` | Loads the fixed test packs in `packs/` |
@@ -162,4 +178,40 @@ A target file describes how to reach any bot with a web endpoint, so testing a n
 | `timeout_seconds` | How long to wait for the whole response, 60 by default |
 
 A bot is treated as untrusted. Redirects are never followed, so a bot can't send the token elsewhere. Responses over 1 MB are cut off. Timeouts, bad JSON, error codes and missing replies all become recorded failures, never crashes.
+
+## Asking the questions
+
+`run.py` puts each test's question to the bot and saves every answer to a transcript the moment it arrives, so a crash keeps what's done. Each question is asked once before any is asked again, so a run that stops early still covers every test evenly. Requests are limited by how many run at once and how many start per second, because every request costs the bot's owner money.
+
+## Judging the answers
+
+`judge.py` gives each answer a verdict. It uses no RAG or search: each test already carries the policy quote it's checked against.
+
+| Verdict | Meaning |
+|---|---|
+| `pass` | The answer was right |
+| `fail` | The answer was wrong, with the words that show it |
+| `unclear` | Nobody can say from this evidence, so a person must check |
+| `error` | The bot gave no usable reply, so there was nothing to judge |
+| `not_run` | The test has no answer in the transcript |
+
+1. **Automatic check, with no model.** If a fact expects an amount and the reply gives only different amounts, it fails: "£500" against "£50".
+2. **The model** judges everything else, seeing the question, the reply, what was captured, and what a correct answer looks like. The bot's reply is sent as data.
+3. **Code checks the model's work.** A failure must quote words that really are in the reply or in what the bot did, and a pass on a fact needs the reply to state the value. Otherwise the verdict becomes `unclear`.
+
+So a pass is never assumed, and doubt goes to a person. **The judge's accuracy hasn't been measured yet.** Nobody should rely on its verdicts until it has been checked against hand-marked results.
+
+## The report
+
+`report.py` turns verdicts into an HTML page and a JSON file. It needs no model or key.
+
+Each failed test shows the customer's question, the bot's reply, the problem, what the bot did, why it failed, what the policy says, the source, and how often it happened. A test with any failure counts as failed, however rare, because a failure in one answer out of twenty can still reach a customer.
+
+| Severity | When |
+|---|---|
+| Critical | The bot did something wrong, such as calling a tool, not only saying something wrong |
+| High | A wrong amount of money, or a failure in a standard pack |
+| Medium | Any other failure |
+
+A bot's reply is untrusted, and could contain a script. Everything on the page is escaped, it has no JavaScript, and it can't load anything from elsewhere. Every report says the judge's accuracy hasn't been measured, until it has.
 

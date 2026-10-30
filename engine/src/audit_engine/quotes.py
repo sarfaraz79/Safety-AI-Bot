@@ -24,22 +24,22 @@ def check_item(item: Item, document: Document) -> QuoteProblem | None:
     section = next((s for s in document.sections if s.heading == item.section), None)
     if section is None:
         return QuoteProblem.UNKNOWN_SECTION
-    quote = _with_single_spaces(item.quote)
+    quote = with_single_spaces(item.quote)
     if len(quote.split(" ")) < MIN_QUOTE_WORDS:
         return QuoteProblem.QUOTE_TOO_SHORT
-    if not _contains_whole(_with_single_spaces(section.text), quote):
+    if not contains_whole(with_single_spaces(section.text), quote):
         return QuoteProblem.QUOTE_NOT_FOUND
-    if item.value is not None and not _contains_whole(quote, _with_single_spaces(item.value)):
+    if item.value is not None and not contains_whole(quote, with_single_spaces(item.value)):
         return QuoteProblem.VALUE_NOT_IN_QUOTE
     return None
 
 
-def _with_single_spaces(text: str) -> str:
+def with_single_spaces(text: str) -> str:
     """Line breaks and repeated spaces are the only differences a quote may have from its source."""
     return " ".join(text.split())
 
 
-def _contains_whole(text: str, part: str) -> bool:
+def contains_whole(text: str, part: str) -> bool:
     """Find `part` in `text`, where it doesn't begin or end inside a longer word or number.
 
     A plain search would find "capped at £50" in "capped at £500", and "£1" in "£1,000".

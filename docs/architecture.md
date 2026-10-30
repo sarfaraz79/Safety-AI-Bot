@@ -59,9 +59,10 @@ Python 3.12+, uv workspace, FastAPI, Pydantic, Typer (engine CLI), httpx2, the o
 1. Repo, tooling, CI (done)
 2. Demo bot with planted flaws (done)
 3. extract + contract format + quote checking (done; Markdown only so far)
-4. generate + run with the web-endpoint adapter
-5. judge + HTML report: demo ready for customer calls
-6. Weeks 2-4: measure the judge against about 150 hand-marked results; SQLite runs + diff; chat-log import; configurable adapters; README; open-source release
+4. generate + run with the web-endpoint adapter (built; not yet run against a real model)
+5. judge + HTML report (built; not yet run against a real model)
+6. Measure the judge against about 150 hand-marked results, then rehearse: demo ready for customer calls (decision 25)
+7. Weeks 2-4: SQLite runs + diff; chat-log import; more adapters; README; open-source release
 
 ## Working agreement (pilot / autopilot)
 

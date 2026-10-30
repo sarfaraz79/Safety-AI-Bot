@@ -10,6 +10,7 @@ import yaml
 from typer.testing import CliRunner
 
 from audit_engine import cli
+from audit_engine.commands import common
 from audit_engine.config import Settings
 from audit_engine.contract import Contract, parse_contract
 from audit_engine.documents import MAX_DOCUMENT_BYTES
@@ -62,7 +63,7 @@ def use_model(monkeypatch: pytest.MonkeyPatch, *script: str | LLMError) -> Scrip
     def factory(_: Settings) -> LLMClient:
         return llm
 
-    monkeypatch.setattr(cli, "_make_client", factory)
+    monkeypatch.setattr(common, "make_client", factory)
     return llm
 
 
@@ -137,7 +138,7 @@ def test_an_incomplete_contract_has_its_own_exit_code(
 
     result = run("extract", policy, "-o", output)
 
-    assert result.exit_code == cli.EXIT_INCOMPLETE
+    assert result.exit_code == common.EXIT_INCOMPLETE
     assert "incomplete" in result.stderr
     assert rejections_of(output)["failed_sections"] == ["Lost or damaged items"]
     assert len(parse_contract(output.read_text("utf-8")).items) == 1
@@ -156,7 +157,7 @@ def test_existing_results_are_not_replaced_and_no_model_call_is_made(
 
     result = run("extract", policy, "-o", tmp_path / "contract.yaml")
 
-    assert result.exit_code == cli.EXIT_FAILED
+    assert result.exit_code == common.EXIT_FAILED
     assert "already exists" in result.stderr
     assert (tmp_path / existing).read_text("utf-8") == "approved: true"
     assert llm.requests == []
@@ -183,8 +184,8 @@ def test_the_policy_can_never_be_overwritten(
 
     result = run("extract", policy, "-o", policy, *force)
 
-    assert result.exit_code == cli.EXIT_FAILED
-    assert "replace the policy" in result.stderr
+    assert result.exit_code == common.EXIT_FAILED
+    assert "replace one of the input files" in result.stderr
     assert policy.read_bytes() == POLICY
     assert llm.requests == []
 
@@ -199,7 +200,7 @@ def test_the_rejections_file_can_never_overwrite_the_policy(
 
     result = run("extract", policy, "-o", tmp_path / "x.yaml", "--force")
 
-    assert result.exit_code == cli.EXIT_FAILED
+    assert result.exit_code == common.EXIT_FAILED
     assert policy.read_bytes() == POLICY
 
 
@@ -213,7 +214,7 @@ def test_a_symlink_cannot_hide_that_the_output_is_the_policy(
 
     result = run("extract", policy, "-o", link, "--force")
 
-    assert result.exit_code == cli.EXIT_FAILED
+    assert result.exit_code == common.EXIT_FAILED
     assert policy.read_bytes() == POLICY
 
 
@@ -225,7 +226,7 @@ def test_a_missing_output_folder_is_caught_before_spending(
 
     result = run("extract", policy, "-o", tmp_path / "missing" / "contract.yaml")
 
-    assert result.exit_code == cli.EXIT_FAILED
+    assert result.exit_code == common.EXIT_FAILED
     assert "does not exist" in result.stderr
     assert llm.requests == []
 
@@ -249,7 +250,7 @@ def test_unusable_policies_are_caught_before_spending(
 
     result = run("extract", policy, "-o", tmp_path / "contract.yaml")
 
-    assert result.exit_code == cli.EXIT_FAILED
+    assert result.exit_code == common.EXIT_FAILED
     assert problem in result.stderr
     assert llm.requests == []
 
@@ -258,7 +259,7 @@ def test_unusable_policies_are_caught_before_spending(
 def test_a_missing_policy_gives_a_plain_message(tmp_path: Path) -> None:
     result = run("extract", tmp_path / "nope.md", "-o", tmp_path / "contract.yaml")
 
-    assert result.exit_code == cli.EXIT_FAILED
+    assert result.exit_code == common.EXIT_FAILED
     assert "No such file" in result.stderr
 
 
@@ -266,7 +267,7 @@ def test_a_missing_policy_gives_a_plain_message(tmp_path: Path) -> None:
 def test_a_folder_instead_of_a_policy_gives_a_plain_message(tmp_path: Path) -> None:
     result = run("extract", tmp_path, "-o", tmp_path / "contract.yaml")
 
-    assert result.exit_code == cli.EXIT_FAILED
+    assert result.exit_code == common.EXIT_FAILED
     assert "Could not read" in result.stderr
 
 
@@ -282,7 +283,7 @@ def test_a_provider_failure_writes_nothing(
 
     result = run("extract", policy, "-o", output)
 
-    assert result.exit_code == cli.EXIT_FAILED
+    assert result.exit_code == common.EXIT_FAILED
     assert "RateLimitError" in result.stderr
     assert "Nothing was written" in result.stderr
     assert not output.exists()
@@ -305,7 +306,7 @@ def test_a_failed_write_leaves_no_partial_files(
     result = run("extract", policy, "-o", folder / "contract.yaml")
 
     folder.chmod(0o700)
-    assert result.exit_code == cli.EXIT_FAILED
+    assert result.exit_code == common.EXIT_FAILED
     assert "Could not write" in result.stderr
     assert list(folder.iterdir()) == []
 
@@ -325,7 +326,7 @@ def test_a_failure_while_saving_removes_the_temporary_file(
 
     result = run("extract", policy, "-o", folder / "contract.yaml")
 
-    assert result.exit_code == cli.EXIT_FAILED
+    assert result.exit_code == common.EXIT_FAILED
     assert list(folder.iterdir()) == []
 
 
@@ -364,7 +365,7 @@ def test_configuration_errors_name_the_variable_and_hide_the_value(
 
     result = run("extract", policy, "-o", tmp_path / "contract.yaml")
 
-    assert result.exit_code == cli.EXIT_FAILED
+    assert result.exit_code == common.EXIT_FAILED
     assert expected in result.stderr
     assert "sk bad key" not in result.output
 
@@ -386,11 +387,11 @@ def test_the_whole_path_to_the_provider_never_shows_the_key(
             http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(provider)),
         )
 
-    monkeypatch.setattr(cli, "_make_client", factory)
+    monkeypatch.setattr(common, "make_client", factory)
 
     result = run("extract", policy, "-o", tmp_path / "contract.yaml")
 
-    assert result.exit_code == cli.EXIT_FAILED
+    assert result.exit_code == common.EXIT_FAILED
     assert API_KEY not in result.output
     assert "AuthenticationError" in result.stderr
 
@@ -398,7 +399,7 @@ def test_the_whole_path_to_the_provider_never_shows_the_key(
 def test_the_real_client_is_built_from_settings() -> None:
     settings = Settings.model_validate({"llm_model": "m", "llm_api_key": API_KEY})
 
-    assert isinstance(cli._make_client(settings), OpenAICompatibleClient)
+    assert isinstance(common.make_client(settings), OpenAICompatibleClient)
 
 
 def test_crashes_cannot_print_local_variables_like_the_key() -> None:
