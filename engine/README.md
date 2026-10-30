@@ -2,7 +2,7 @@
 
 Tests a customer-facing AI agent against facts and rules taken from a company's own policy documents. The plan is in [docs/architecture.md](../docs/architecture.md).
 
-So far this package holds the contract format (`contract.py`) and the Markdown reader (`documents.py`). The `extract` command that produces contracts is still being built.
+So far this package holds the contract format (`contract.py`), the Markdown reader (`documents.py`) and the evidence check (`quotes.py`). The `extract` command that produces contracts is still being built.
 
 ## Reading policy documents
 
@@ -41,3 +41,18 @@ items:
 - A `fact` has a `value`, such as an amount or a time limit. A `rule` has none.
 - `approved` records the reviewer's sign-off. It must be a real `true` or `false`, so a stray `"no"` in quotes can't count as approval.
 - Text is kept exactly as written, including spaces, because quotes must match the source word for word.
+
+## Checking the evidence
+
+`quotes.py` checks each item against the document. An item that fails is rejected and listed for the reviewer, never silently dropped.
+
+| Check | Rule |
+|---|---|
+| Section | The item's `section` must be one of the document's headings |
+| Length | A quote needs at least 2 words, so the reviewer can see what it refers to |
+| Quote | It must be in that section, word for word, including case and punctuation. Only line breaks and repeated spaces may differ |
+| Value | A fact's `value` must be in that item's own quote |
+
+A match can't begin or end inside a longer word or number, so "capped at £50" doesn't match "capped at £500", and "£1" doesn't match "£1,000".
+
+These checks prove the words exist, not that the statement reads them fairly. "refund is available" passes against "No refund is available", and a fact the model leaves out passes everything. Catching those is the job of the human review.
