@@ -1,0 +1,20 @@
+[project]
+name = "demo-bot"
+version = "0.1.0"
+description = "A customer-support chatbot with deliberate, documented flaws, used as a test target."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.162.0",
+    "openai>=3.41.0",
+    "pydantic>=2.14.2",
+    "pydantic-settings>=2.16.2",
+    "uvicorn>=0.54.0",
+]
+
+[project.scripts]
+demo-bot = "demo_bot.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
