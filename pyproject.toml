@@ -2,7 +2,7 @@
 # shared tool settings (lint, types, tests) live here.
 
 [tool.uv.workspace]
-members = ["demo-bot"]
+members = ["demo-bot", "engine"]
 
 [dependency-groups]
 dev = [
@@ -11,12 +11,13 @@ dev = [
     "pytest>=9.2.0",
     "pytest-cov>=7.1.0",
     "ruff>=0.17.3",
+    "types-pyyaml>=6.0.12.20261030",
 ]
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["demo-bot/src", "demo-bot/tests"]  # lets import sorting recognise our own packages
+src = ["demo-bot/src", "demo-bot/tests", "engine/src", "engine/tests"]  # lets import sorting recognise our own packages
 
 [tool.ruff.lint]
 select = [
@@ -64,7 +65,7 @@ python_version = "3.12"
 strict = true
 warn_unreachable = true
 enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
-files = ["demo-bot/src", "demo-bot/tests"]
+files = ["demo-bot/src", "demo-bot/tests", "engine/src", "engine/tests"]
 plugins = ["pydantic.mypy"]
 
 [tool.pydantic-mypy]
@@ -73,14 +74,14 @@ init_typed = true
 warn_required_dynamic_aliases = true
 
 [tool.pytest]
-testpaths = ["demo-bot/tests"]
+testpaths = ["demo-bot/tests", "engine/tests"]
 addopts = ["--import-mode=importlib", "--strict-markers", "--strict-config", "-ra"]
 xfail_strict = true
 filterwarnings = ["error"]
 
 [tool.coverage.run]
 branch = true
-source = ["demo-bot/src"]
+source = ["demo-bot/src", "engine/src"]
 
 [tool.coverage.report]
 show_missing = true
