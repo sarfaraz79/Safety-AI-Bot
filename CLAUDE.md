@@ -22,6 +22,7 @@ Its flaws live in `demo-bot/src/demo_bot/data/` and are listed in `demo-bot/READ
   - `uv run mypy`
   - `uv run pytest --cov`
 - Run the bot: `uv run demo-bot`
+- Extract a contract: `uv run audit-engine extract policy.md -o contract.yaml`
 
 ## How we write code
 

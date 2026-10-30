@@ -8,8 +8,13 @@ dependencies = [
     "httpx2>=2.16.0",
     "openai>=3.41.0",
     "pydantic>=2.14.2",
+    "pydantic-settings>=2.16.2",
     "pyyaml>=6.0.3",
+    "typer>=0.27.3",
 ]
+
+[project.scripts]
+audit-engine = "audit_engine.cli:app"
 
 [build-system]
 requires = ["hatchling"]

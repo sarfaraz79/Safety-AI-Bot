@@ -2,9 +2,10 @@
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import PurePosixPath
 
+import yaml
 from pydantic import BaseModel, Field, ValidationError
 
 from audit_engine.contract import MAX_ITEMS, Contract, Item
@@ -149,7 +150,21 @@ def _review(
     except ValidationError:
         return rejection(INVALID_ITEM)
     problem = check_item(item, document)
-    return item if problem is None else rejection(problem)
+    return item if problem is None else rejection(problem.value)
+
+
+def render_rejections(result: ExtractionResult) -> str:
+    """Write what the contract left out as YAML, for the reviewer."""
+    return yaml.safe_dump(
+        {
+            "source": result.contract.source.model_dump(),
+            "failed_sections": list(result.failed_sections),
+            "rejected": [asdict(rejection) for rejection in result.rejected],
+        },
+        allow_unicode=True,
+        sort_keys=False,
+        width=100,
+    )
 
 
 def _id_prefix(document_name: str) -> str:
