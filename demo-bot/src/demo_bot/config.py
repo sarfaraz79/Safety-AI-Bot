@@ -1,8 +1,9 @@
 """Settings, read from environment variables prefixed DEMO_BOT_ or from a .env file."""
 
+import re
 from typing import Literal, Self
 
-from pydantic import Field, HttpUrl, SecretStr, model_validator
+from pydantic import Field, HttpUrl, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from demo_bot.security import is_loopback
@@ -10,6 +11,8 @@ from demo_bot.security import is_loopback
 PromptVersion = Literal["v1", "v2"]
 
 MIN_AUTH_TOKEN_LENGTH = 16
+
+_HEADER_SAFE_SECRET = re.compile(r"[!-~]+")  # secrets travel in HTTP headers
 
 
 class Settings(BaseSettings):
@@ -19,6 +22,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         env_ignore_empty=True,
         extra="ignore",
+        str_strip_whitespace=True,
     )
 
     # Any provider with an OpenAI-compatible Chat Completions API.
@@ -30,9 +34,24 @@ class Settings(BaseSettings):
     prompt_version: PromptVersion = "v1"
     retrieval_top_k: int = Field(default=2, ge=1, le=10)
 
-    host: str = "127.0.0.1"
+    host: str = Field(default="127.0.0.1", min_length=1)
     port: int = Field(default=8000, ge=1, le=65_535)
     auth_token: SecretStr | None = None
+
+    @field_validator("llm_api_key", "auth_token")
+    @classmethod
+    def _check_secret_characters(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is not None and not _HEADER_SAFE_SECRET.fullmatch(value.get_secret_value()):
+            raise ValueError("must contain only printable ASCII characters, with no spaces.")
+        return value
+
+    @field_validator("llm_base_url")
+    @classmethod
+    def _check_base_url_is_encrypted(cls, value: HttpUrl) -> HttpUrl:
+        host = (value.host or "").strip("[]")
+        if value.scheme != "https" and not is_loopback(host):
+            raise ValueError("must use https unless it points at this computer.")
+        return value
 
     @model_validator(mode="after")
     def _check_auth_token(self) -> Self:

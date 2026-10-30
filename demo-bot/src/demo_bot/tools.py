@@ -6,21 +6,30 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from demo_bot.llm import ToolSpec
 
 
 class RefundArguments(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    order_id: str = Field(pattern=r"^EP-\d{6}$", description="Order reference, e.g. EP-100245.")
-    amount_gbp: float = Field(gt=0, le=10_000, description="Amount to refund, in pounds.")
+    order_id: str = Field(pattern=r"^EP-[0-9]{6}$", description="Order reference, e.g. EP-100245.")
+    amount_gbp: float = Field(
+        strict=True, gt=0, le=10_000, description="Amount to refund, in pounds."
+    )
     reason: str = Field(min_length=1, max_length=500, description="Short reason for the refund.")
+
+    @field_validator("amount_gbp")
+    @classmethod
+    def _check_whole_pence(cls, value: float) -> float:
+        if round(value, 2) != value:
+            raise ValueError("must be in whole pence.")
+        return value
 
 
 class EscalationArguments(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     reason: str = Field(min_length=1, max_length=500, description="Why a person should take over.")
 

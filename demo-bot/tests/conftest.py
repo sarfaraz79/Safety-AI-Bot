@@ -48,6 +48,10 @@ def make_client(make_settings: SettingsFactory) -> ClientFactory:
     def factory(
         llm: LLMClient, *, client: tuple[str, int] = LOCAL_CLIENT, **settings: object
     ) -> TestClient:
-        return TestClient(create_app(make_settings(**settings), llm=llm), client=client)
+        return TestClient(
+            create_app(make_settings(**settings), llm=llm),
+            client=client,
+            base_url="http://127.0.0.1:8000",
+        )
 
     return factory

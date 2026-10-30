@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 _K1 = 1.5  # how quickly repeated terms stop adding to the score
 _B = 0.75  # how strongly long chunks are penalised
-_TOKEN = re.compile(r"[a-z0-9]+")
+_TOKEN = re.compile(r"[^\W_]+")  # letters and digits in any language
 _STOPWORDS = frozenset(
     "a an and are as at be but by can do does for from get has have how i if in is it me my "
     "of on or s so t than that the their this to was we what when where which who will with "

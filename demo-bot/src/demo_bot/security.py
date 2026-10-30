@@ -35,7 +35,7 @@ def require_client_access(token: SecretStr | None) -> AccessCheck:
     """Build the access check for protected routes.
 
     With a token configured, every request must send `Authorization: Bearer <token>`.
-    Without one, only clients on this machine are allowed.
+    Without one, only clients on this machine are allowed, and not web pages they have open.
     """
     expected = token.get_secret_value().encode() if token is not None else None
 
@@ -44,8 +44,7 @@ def require_client_access(token: SecretStr | None) -> AccessCheck:
         credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)],
     ) -> None:
         if expected is None:
-            client_host = request.client.host if request.client else None
-            if not is_loopback(client_host):
+            if not _is_local_request(request):
                 raise HTTPException(status.HTTP_403_FORBIDDEN, "Remote clients are not allowed.")
             return
         supplied = credentials.credentials.encode() if credentials is not None else b""
@@ -57,6 +56,29 @@ def require_client_access(token: SecretStr | None) -> AccessCheck:
             )
 
     return check
+
+
+def _is_local_request(request: Request) -> bool:
+    """Check the caller, and that no website is using the caller's browser to reach this server.
+
+    A browser on this machine connects from loopback, so its Host and Origin headers must be
+    checked too: Host stops DNS rebinding, and Origin stops cross-site form-style requests.
+    """
+    client_host = request.client.host if request.client else None
+    host_header = request.headers.get("host", "")
+    origin = request.headers.get("origin")
+    return (
+        is_loopback(client_host)
+        and is_loopback(_hostname(host_header))
+        and (origin is None or is_loopback(_hostname(origin.partition("://")[2])))
+    )
+
+
+def _hostname(address: str) -> str:
+    """Remove the port from `host:port` or `[ipv6]:port`."""
+    if address.startswith("["):
+        return address[1:].partition("]")[0]
+    return address.partition(":")[0]
 
 
 class BodySizeLimitMiddleware:

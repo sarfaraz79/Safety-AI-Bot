@@ -4,7 +4,9 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from demo_bot.agent import AgentReply, SupportAgent
 from demo_bot.config import Settings
@@ -48,6 +50,12 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
     app = FastAPI(title="Demo support bot", redoc_url=None, lifespan=lifespan)
     app.add_middleware(BodySizeLimitMiddleware, max_bytes=MAX_BODY_BYTES)
 
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(_: Request, exc: RequestValidationError) -> JSONResponse:
+        return JSONResponse(
+            {"detail": _describe_problems(exc)}, status_code=status.HTTP_422_UNPROCESSABLE_CONTENT
+        )
+
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
@@ -71,6 +79,21 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
         return _to_response(reply, settings.prompt_version)
 
     return app
+
+
+def _describe_problems(exc: RequestValidationError) -> list[dict[str, object]]:
+    """List what's wrong, without FastAPI's echo of the input: it may hold unencodable text."""
+    return [
+        {
+            "type": error["type"],
+            "loc": [
+                part if isinstance(part, int) else part.encode("utf-8", "replace").decode()
+                for part in error["loc"]
+            ],
+            "msg": error["msg"],
+        }
+        for error in exc.errors()
+    ]
 
 
 def _to_response(reply: AgentReply, prompt_version: str) -> ChatResponse:

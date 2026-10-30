@@ -19,6 +19,55 @@ def test_tokenize_keeps_words_and_numbers_without_stopwords() -> None:
     assert tokenize("What's the REFUND for EP-100245, £15?") == ["refund", "ep", "100245", "15"]
 
 
+@pytest.mark.parametrize(
+    ("text", "tokens"),
+    [
+        ("café", ["café"]),
+        ("配送", ["配送"]),
+        ("доставка", ["доставка"]),
+        ("snake_case", ["snake", "case"]),
+        ("REFUND refund", ["refund", "refund"]),
+        ("", []),
+        ("£$%!", []),
+        ("😀", []),
+        ("the and of", []),
+    ],
+)
+def test_tokenize_edge_cases(text: str, tokens: list[str]) -> None:
+    assert tokenize(text) == tokens
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["", "   ", "!!!", "😀", "\x00", "\ud800", "x" * 4_000, "refund " * 800, "a\nb\tc", "配送"],
+)
+def test_hostile_queries_never_crash_search(index: BM25Index, query: str) -> None:
+    assert len(index.search(query, TOP_K)) <= TOP_K
+
+
+def test_search_is_case_insensitive(index: BM25Index) -> None:
+    assert ids(index, "REFUND LIMIT") == ids(index, "refund limit")
+
+
+def test_asking_for_more_than_exists_returns_what_matched() -> None:
+    index = BM25Index([Chunk("a#1", "A", "parcel"), Chunk("b#1", "B", "box")])
+
+    assert [r.chunk.id for r in index.search("parcel", 10)] == ["a#1"]
+
+
+def test_equal_scores_keep_a_stable_order() -> None:
+    index = BM25Index([Chunk("a#1", "A", "parcel"), Chunk("b#1", "B", "parcel")])
+
+    assert [r.chunk.id for r in index.search("parcel", 2)] == ["a#1", "b#1"]
+
+
+def test_search_gives_the_same_answer_every_time(index: BM25Index) -> None:
+    """The demo relies on retrieval being deterministic: only the model's wording varies."""
+    question = "What is the refund limit for a damaged parcel?"
+
+    assert all(index.search(question, TOP_K) == index.search(question, TOP_K) for _ in range(20))
+
+
 def test_index_needs_chunks() -> None:
     with pytest.raises(ValueError, match="at least one chunk"):
         BM25Index([])

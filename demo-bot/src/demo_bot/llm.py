@@ -6,15 +6,12 @@ changing this module alone.
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, assert_never
+from typing import Annotated, Any, Protocol, assert_never
 
 import httpx2
 import openai
-from openai.types.chat import (
-    ChatCompletionFunctionToolParam,
-    ChatCompletionMessageFunctionToolCall,
-    ChatCompletionMessageParam,
-)
+from openai.types.chat import ChatCompletionFunctionToolParam, ChatCompletionMessageParam
+from pydantic import AfterValidator, BaseModel, Field
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +67,39 @@ class LLMError(Exception):
     """The model provider failed to return a response."""
 
 
+def _check_encodable(text: str) -> str:
+    text.encode()  # broken Unicode raises here, instead of crashing the response later
+    return text
+
+
+_ProviderText = Annotated[str, AfterValidator(_check_encodable)]
+
+
+class _ProviderFunction(BaseModel):
+    name: _ProviderText = Field(min_length=1)
+    arguments: _ProviderText
+
+
+class _ProviderToolCall(BaseModel):
+    id: _ProviderText = Field(min_length=1)
+    function: _ProviderFunction
+
+
+class _ProviderMessage(BaseModel):
+    content: _ProviderText | None = None
+    tool_calls: list[_ProviderToolCall] | None = None
+
+
+class _ProviderChoice(BaseModel):
+    message: _ProviderMessage
+
+
+class _ProviderCompletion(BaseModel):
+    """The parts of a provider's reply the bot relies on. The SDK itself doesn't enforce them."""
+
+    choices: list[_ProviderChoice] = Field(min_length=1)
+
+
 class LLMClient(Protocol):
     async def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> LLMResponse:
         """Send the conversation and return the model's next message."""
@@ -108,16 +138,18 @@ class OpenAICompatibleClient:
                 messages=[_to_openai_message(message) for message in messages],
                 tools=[_to_openai_tool(tool) for tool in tools] if tools else openai.omit,
             )
-        except openai.OpenAIError as exc:
+            reply = (
+                _ProviderCompletion.model_validate(completion, from_attributes=True)
+                .choices[0]
+                .message
+            )
+        except (openai.OpenAIError, httpx2.HTTPError, ValueError) as exc:
+            # Only the error's type: its text can quote the reply or the request.
             raise LLMError(type(exc).__name__) from exc
 
-        if not completion.choices:
-            raise LLMError("The model returned no choices.")
-        reply = completion.choices[0].message
         tool_calls = tuple(
             ToolCall(id=call.id, name=call.function.name, arguments=call.function.arguments)
             for call in reply.tool_calls or ()
-            if isinstance(call, ChatCompletionMessageFunctionToolCall)
         )
         return LLMResponse(content=reply.content, tool_calls=tool_calls)
 
