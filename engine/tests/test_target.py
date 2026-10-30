@@ -1,6 +1,6 @@
 import asyncio
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Callable, Coroutine
 from typing import Any
 
 import httpx2
@@ -23,7 +23,7 @@ request: {messages: [{role: user, content: "{{question}}"}]}
 reply_path: reply
 capture: {tool_calls: tool_calls, sources: sources}
 """
-Provider = Callable[[httpx2.Request], httpx2.Response | Awaitable[httpx2.Response]]
+Provider = Callable[[httpx2.Request], httpx2.Response | Coroutine[Any, Any, httpx2.Response]]
 
 
 def target(**overrides: Any) -> Target:
