@@ -7,8 +7,16 @@ from typing import Annotated
 import typer
 
 from audit_engine.commands import common
+from audit_engine.commands.extract import read_policy
 from audit_engine.commands.run import read_tests
-from audit_engine.judge import JudgeError, JudgeSummary, check_transcript, judge_transcript
+from audit_engine.judge import (
+    JudgeContext,
+    JudgeError,
+    JudgeSummary,
+    check_policies,
+    check_transcript,
+    judge_transcript,
+)
 from audit_engine.llm import LLMClient, LLMError
 from audit_engine.results import JudgedAnswer, render_result
 from audit_engine.testcases import CaseFile
@@ -23,6 +31,10 @@ from audit_engine.transcripts import (
 def judge_command(
     transcript: Annotated[Path, typer.Argument(help="The transcript from `audit-engine run`.")],
     tests_path: Annotated[Path, typer.Option("--tests", help="The tests that were run.")],
+    policies: Annotated[
+        list[Path],
+        typer.Option("--policy", help="A current policy to judge against. Repeatable."),
+    ],
     output: Annotated[Path, typer.Option("--output", "-o", help="Where to save the verdicts.")],
     model: Annotated[
         str | None, typer.Option("--model", help="Judge with this model instead of the default.")
@@ -30,10 +42,12 @@ def judge_command(
     force: Annotated[bool, typer.Option("--force", help="Replace existing results.")] = False,
 ) -> None:
     """Decide whether each answer was right, using automatic checks and then a model."""
-    common.check_outputs([output], [transcript, tests_path], force=force)
+    common.check_outputs([output], [transcript, tests_path, *policies], force=force)
     cases = read_tests(tests_path)
     entries, cut_short = _read_transcript(transcript)
+    context = JudgeContext(policies=tuple(read_policy(path) for path in policies))
     try:
+        check_policies(cases, context)
         check_transcript(cases, entries)
     except JudgeError as exc:
         common.fail(str(exc))
@@ -41,7 +55,9 @@ def judge_command(
 
     typer.echo(f"Answers to judge: {len(entries)}. Model: {model or settings.llm_model}.")
     try:
-        summary = asyncio.run(_judge(cases, entries, common.make_client(settings, model), output))
+        summary = asyncio.run(
+            _judge(cases, entries, common.make_client(settings, model), output, context)
+        )
     except LLMError as exc:
         common.fail(f"The model request failed ({exc}). Verdicts so far are in {output}.")
     except OSError as exc:
@@ -58,7 +74,11 @@ def _read_transcript(path: Path) -> tuple[list[TranscriptEntry], bool]:
 
 
 async def _judge(
-    cases: CaseFile, entries: list[TranscriptEntry], llm: LLMClient, output: Path
+    cases: CaseFile,
+    entries: list[TranscriptEntry],
+    llm: LLMClient,
+    output: Path,
+    context: JudgeContext,
 ) -> JudgeSummary:
     try:
         with common.open_for_this_user(output) as file:
@@ -67,7 +87,7 @@ async def _judge(
                 file.write(render_result(result))
                 file.flush()  # saved as it's decided, as each verdict can cost a model call
 
-            return await judge_transcript(cases, entries, llm, record)
+            return await judge_transcript(cases, entries, llm, record, context)
     finally:
         await llm.aclose()
 

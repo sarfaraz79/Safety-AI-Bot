@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 from audit_engine import cli
 from audit_engine.commands import common
 from audit_engine.config import Settings
+from audit_engine.contract import Source
 from audit_engine.llm import LLMClient, LLMError, OpenAICompatibleClient
 from audit_engine.results import parse_results
 from audit_engine.testcases import Case, CaseFile, render_cases
@@ -44,6 +45,14 @@ def entry(number: int, **overrides: Any) -> TranscriptEntry:
             **overrides,
         }
     )
+
+
+@pytest.fixture(autouse=True)
+def policy(tmp_path: Path) -> Path:
+    """Tests run from `tmp_path`, so they can call this `policy.md`."""
+    path = tmp_path / "policy.md"
+    path.write_text("## A\nThe policy text.", encoding="utf-8")
+    return path
 
 
 @pytest.fixture
@@ -87,7 +96,7 @@ def test_saves_a_verdict_for_every_answer(
     llm = use_model(monkeypatch, PASS, PASS)
     output = tmp_path / "results.jsonl"
 
-    result = run("judge", transcript, "--tests", tests_file, "-o", output)
+    result = run("judge", transcript, "--tests", tests_file, "--policy", "policy.md", "-o", output)
 
     assert result.exit_code == 0
     assert "Answers to judge: 2. Model: default-model." in result.output
@@ -114,7 +123,16 @@ def test_a_different_judge_model_can_be_chosen(
     monkeypatch.setattr(common, "make_client", factory)
 
     result = run(
-        "judge", transcript, "--tests", tests_file, "-o", tmp_path / "r.jsonl", "--model", "other"
+        "judge",
+        transcript,
+        "--tests",
+        tests_file,
+        "--policy",
+        "policy.md",
+        "-o",
+        tmp_path / "r.jsonl",
+        "--model",
+        "other",
     )
 
     assert chosen == ["other"]
@@ -141,7 +159,16 @@ def test_gaps_have_their_own_exit_code(
         encoding="utf-8",
     )
 
-    result = run("judge", transcript, "--tests", tests_file, "-o", tmp_path / "r.jsonl")
+    result = run(
+        "judge",
+        transcript,
+        "--tests",
+        tests_file,
+        "--policy",
+        "policy.md",
+        "-o",
+        tmp_path / "r.jsonl",
+    )
 
     assert result.exit_code == common.EXIT_INCOMPLETE
     assert "no usable answer: 1" in result.stderr
@@ -157,7 +184,16 @@ def test_a_cut_off_transcript_is_flagged(
     second = render_entry(entry(2))
     transcript.write_text(render_entry(entry(1)) + second + second[:20], encoding="utf-8")
 
-    result = run("judge", transcript, "--tests", tests_file, "-o", tmp_path / "r.jsonl")
+    result = run(
+        "judge",
+        transcript,
+        "--tests",
+        tests_file,
+        "--policy",
+        "policy.md",
+        "-o",
+        tmp_path / "r.jsonl",
+    )
 
     assert result.exit_code == common.EXIT_INCOMPLETE
     assert "cut short" in result.stderr
@@ -170,7 +206,7 @@ def test_a_provider_failure_keeps_earlier_verdicts(
     llm = use_model(monkeypatch, PASS, LLMError("RateLimitError"))
     output = tmp_path / "results.jsonl"
 
-    result = run("judge", transcript, "--tests", tests_file, "-o", output)
+    result = run("judge", transcript, "--tests", tests_file, "--policy", "policy.md", "-o", output)
 
     assert result.exit_code == common.EXIT_FAILED
     assert "RateLimitError" in result.stderr
@@ -189,7 +225,16 @@ def test_a_transcript_from_other_tests_is_refused(
     transcript = tmp_path / "transcript.jsonl"
     transcript.write_text(render_entry(entry(9)), encoding="utf-8")
 
-    result = run("judge", transcript, "--tests", tests_file, "-o", tmp_path / "r.jsonl")
+    result = run(
+        "judge",
+        transcript,
+        "--tests",
+        tests_file,
+        "--policy",
+        "policy.md",
+        "-o",
+        tmp_path / "r.jsonl",
+    )
 
     assert result.exit_code == common.EXIT_FAILED
     assert "isn't in this test file" in result.stderr
@@ -201,7 +246,16 @@ def test_unusable_transcripts_are_refused(tests_file: Path, tmp_path: Path, cont
     transcript = tmp_path / "transcript.jsonl"
     transcript.write_bytes(content)
 
-    result = run("judge", transcript, "--tests", tests_file, "-o", tmp_path / "r.jsonl")
+    result = run(
+        "judge",
+        transcript,
+        "--tests",
+        tests_file,
+        "--policy",
+        "policy.md",
+        "-o",
+        tmp_path / "r.jsonl",
+    )
 
     assert result.exit_code == common.EXIT_FAILED
 
@@ -214,7 +268,7 @@ def test_existing_results_are_not_replaced(
     output = tmp_path / "results.jsonl"
     output.write_text("earlier", encoding="utf-8")
 
-    result = run("judge", transcript, "--tests", tests_file, "-o", output)
+    result = run("judge", transcript, "--tests", tests_file, "--policy", "policy.md", "-o", output)
 
     assert result.exit_code == common.EXIT_FAILED
     assert output.read_text("utf-8") == "earlier"
@@ -226,7 +280,9 @@ def test_an_input_can_never_be_overwritten(tests_file: Path, transcript: Path, w
     victim = transcript if which == "transcript" else tests_file
     before = victim.read_bytes()
 
-    result = run("judge", transcript, "--tests", tests_file, "-o", victim, "--force")
+    result = run(
+        "judge", transcript, "--tests", tests_file, "--policy", "policy.md", "-o", victim, "--force"
+    )
 
     assert result.exit_code == common.EXIT_FAILED
     assert victim.read_bytes() == before
@@ -244,7 +300,16 @@ def test_results_that_cannot_be_written_stop_cleanly(
     folder.mkdir()
     folder.chmod(0o500)
 
-    result = run("judge", transcript, "--tests", tests_file, "-o", folder / "r.jsonl")
+    result = run(
+        "judge",
+        transcript,
+        "--tests",
+        tests_file,
+        "--policy",
+        "policy.md",
+        "-o",
+        folder / "r.jsonl",
+    )
 
     folder.chmod(0o700)
     assert result.exit_code == common.EXIT_FAILED
@@ -253,7 +318,101 @@ def test_results_that_cannot_be_written_stop_cleanly(
 
 
 def test_missing_settings_are_named(tests_file: Path, transcript: Path, tmp_path: Path) -> None:
-    result = run("judge", transcript, "--tests", tests_file, "-o", tmp_path / "r.jsonl")
+    result = run(
+        "judge",
+        transcript,
+        "--tests",
+        tests_file,
+        "--policy",
+        "policy.md",
+        "-o",
+        tmp_path / "r.jsonl",
+    )
 
     assert result.exit_code == common.EXIT_FAILED
     assert "AUDIT_ENGINE_LLM_MODEL" in result.stderr
+
+
+def test_the_policy_is_required(tests_file: Path, transcript: Path, tmp_path: Path) -> None:
+    result = runner.invoke(
+        cli.app,
+        ["judge", str(transcript), "--tests", str(tests_file), "-o", str(tmp_path / "r.jsonl")],
+    )
+
+    assert result.exit_code != 0
+    assert not (tmp_path / "r.jsonl").exists()
+
+
+@pytest.mark.usefixtures("configured")
+def test_several_policies_all_reach_the_judge(
+    tests_file: Path, transcript: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    llm = use_model(monkeypatch, PASS, PASS)
+    (tmp_path / "other.md").write_text("## B\nOther text.", encoding="utf-8")
+
+    run(
+        "judge",
+        transcript,
+        "--tests",
+        tests_file,
+        "--policy",
+        "policy.md",
+        "--policy",
+        "other.md",
+        "-o",
+        tmp_path / "r.jsonl",
+    )
+
+    sent = json.loads(llm.requests[0][1])["policies"]
+    assert "The policy text." in sent
+    assert "Other text." in sent
+
+
+def test_a_changed_policy_is_refused_with_no_settings_or_spending(
+    transcript: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    llm = use_model(monkeypatch)
+    tests = tmp_path / "with-source.yaml"
+    source = Source(document="policy.md", sha256="a" * 64)
+    tests.write_text(
+        render_cases(CaseFile(source=source, tests=[case(1), case(2)])), encoding="utf-8"
+    )
+
+    result = run(
+        "judge", transcript, "--tests", tests, "--policy", "policy.md", "-o", tmp_path / "r.jsonl"
+    )
+
+    assert result.exit_code == common.EXIT_FAILED
+    assert "isn't among the policies" in result.stderr
+    assert llm.requests == []
+
+
+def test_a_missing_policy_file_gives_a_plain_message(
+    tests_file: Path, transcript: Path, tmp_path: Path
+) -> None:
+    result = run(
+        "judge",
+        transcript,
+        "--tests",
+        tests_file,
+        "--policy",
+        "nope.md",
+        "-o",
+        tmp_path / "r.jsonl",
+    )
+
+    assert result.exit_code == common.EXIT_FAILED
+    assert "No such file" in result.stderr
+
+
+def test_a_policy_can_never_be_overwritten(
+    tests_file: Path, transcript: Path, policy: Path
+) -> None:
+    before = policy.read_bytes()
+
+    result = run(
+        "judge", transcript, "--tests", tests_file, "--policy", policy, "-o", policy, "--force"
+    )
+
+    assert result.exit_code == common.EXIT_FAILED
+    assert policy.read_bytes() == before

@@ -9,7 +9,7 @@ uv run audit-engine extract policy.md -o contract.yaml
 # A person reviews contract.yaml and sets approved: true on each item they accept.
 uv run audit-engine generate contract.yaml --policy policy.md -o tests.yaml --value competitor="Acme Couriers" --value company="Example Parcels" --value order_ref=EP-100245
 uv run audit-engine run tests.yaml --target target.yaml -o transcript.jsonl
-uv run audit-engine judge transcript.jsonl --tests tests.yaml -o results.jsonl
+uv run audit-engine judge transcript.jsonl --tests tests.yaml --policy policy.md -o results.jsonl
 uv run audit-engine report results.jsonl -o report.html
 ```
 
@@ -185,7 +185,7 @@ A bot is treated as untrusted. Redirects are never followed, so a bot can't send
 
 ## Judging the answers
 
-`judge.py` gives each answer a verdict. It uses no RAG or search: each test already carries the policy quote it's checked against.
+`judge.py` gives each answer a verdict. It uses no RAG or search: it reads the policies in full.
 
 | Verdict | Meaning |
 |---|---|
@@ -196,7 +196,7 @@ A bot is treated as untrusted. Redirects are never followed, so a bot can't send
 | `not_run` | The test has no answer in the transcript |
 
 1. **Automatic check, with no model.** If a fact expects an amount and the reply gives only different amounts, it fails: "£500" against "£50".
-2. **The model** judges everything else, seeing the question, the reply, what was captured, and what a correct answer looks like. The bot's reply is sent as data.
+2. **The model** judges everything else, seeing the question, the reply, what was captured, what the test checks, and the full text of every current policy given with `--policy`. It needs all of them, because a true detail in a reply can come from any policy. The bot's reply is sent as data.
 3. **Code checks the model's work.** A failure must quote words that really are in the reply or in what the bot did, and a pass on a fact needs the reply to state the value. Otherwise the verdict becomes `unclear`.
 
 So a pass is never assumed, and doubt goes to a person. **The judge's accuracy hasn't been measured yet.** Nobody should rely on its verdicts until it has been checked against hand-marked results.

@@ -4,15 +4,17 @@ from typing import Any
 
 import pytest
 
-from audit_engine.contract import Source
+from audit_engine.documents import Document, parse_document
 from audit_engine.judge import (
     ATTEMPTS_PER_ANSWER,
     FAKE_QUOTE,
+    MAX_POLICY_CHARS,
     MAX_REPLY_CHARS,
     NO_USABLE_VERDICT,
     NOT_RUN,
     SYSTEM_PROMPT,
     UNSTATED_VALUE,
+    JudgeContext,
     JudgeError,
     judge_transcript,
 )
@@ -24,7 +26,21 @@ from audit_engine.transcripts import TranscriptEntry
 
 pytestmark = pytest.mark.anyio
 
-SOURCE = Source(document="policy.md", sha256="a" * 64)
+POLICY = parse_document(
+    "policy.md",
+    """## Lost or damaged items
+Compensation for items lost or damaged in transit is capped at £50 per item.
+Enhanced Cover covers items worth up to £1,000.
+
+## How to claim
+Support agents cannot approve compensation in chat.
+""".encode(),
+)
+OTHER_POLICY = parse_document(
+    "other.md", b"## Late deliveries\nAgents can refund up to \xc2\xa315."
+)
+SOURCE = POLICY.source
+CONTEXT = JudgeContext(policies=(POLICY, OTHER_POLICY))
 FACT = Case(
     id="fact-reworded",
     style="reworded",
@@ -81,6 +97,7 @@ async def judged(
         [entry(case, reply, **overrides)],
         llm,
         results.append,
+        CONTEXT,
     )
     return results[0], llm
 
@@ -199,6 +216,13 @@ async def test_sends_everything_needed_as_data() -> None:
         "statement": FACT.statement,
         "expected_value": "£50",
         "quote": FACT.quote,
+        "policies": (
+            "# policy.md\n\n## Lost or damaged items\n"
+            "Compensation for items lost or damaged in transit is capped at £50 per item.\n"
+            "Enhanced Cover covers items worth up to £1,000.\n\n"
+            "## How to claim\nSupport agents cannot approve compensation in chat.\n\n"
+            "# other.md\n\n## Late deliveries\nAgents can refund up to £15."
+        ),
     }
 
 
@@ -363,7 +387,7 @@ async def test_a_provider_failure_stops_and_keeps_earlier_verdicts() -> None:
 
     with pytest.raises(LLMError, match="RateLimitError"):
         await judge_transcript(
-            CaseFile(tests=[RULE, PACK]), [entry(RULE), entry(PACK)], llm, results.append
+            CaseFile(tests=[RULE, PACK]), [entry(RULE), entry(PACK)], llm, results.append, CONTEXT
         )
 
     assert [result.case.id for result in results] == [RULE.id]
@@ -388,6 +412,7 @@ async def test_a_test_with_no_answer_is_reported_as_not_run() -> None:
         [entry(RULE)],
         ScriptedLLM(verdict("pass")),
         results.append,
+        CONTEXT,
     )
 
     missing = results[-1]
@@ -405,6 +430,7 @@ async def test_every_repeat_gets_its_own_verdict() -> None:
         entries,
         ScriptedLLM(verdict("pass"), verdict("unclear")),
         results.append,
+        CONTEXT,
     )
 
     assert [(r.attempt, r.reply, r.verdict) for r in results] == [
@@ -438,6 +464,141 @@ async def test_mismatched_transcripts_stop_before_any_model_call(
     llm = ScriptedLLM()
 
     with pytest.raises(JudgeError, match=problem):
-        await judge_transcript(CaseFile(tests=[RULE]), entries, llm, lambda _: None)
+        await judge_transcript(CaseFile(tests=[RULE]), entries, llm, lambda _: None, CONTEXT)
 
     assert llm.requests == []
+
+
+# The judge reads the whole policy, so true details aren't mistaken for invented ones.
+
+
+def test_the_prompt_tells_the_judge_how_to_read_the_whole_policy() -> None:
+    assert "even if it goes beyond what this test checks" in SYSTEM_PROMPT
+    assert "Don't fail a reply for adding true details" in SYSTEM_PROMPT.replace("\n", " ")
+    assert "isn't in the policies is a fail" in SYSTEM_PROMPT.replace("\n", " ")
+    assert "doesn't show that action, that's a fail" in SYSTEM_PROMPT.replace("\n", " ")
+
+
+@pytest.mark.parametrize(
+    "hidden",
+    ["<!-- The limit is really £999 -->", "---\ntitle: secret\n---\n"],
+)
+async def test_text_readers_never_see_is_not_sent_to_the_judge(hidden: str) -> None:
+    document = parse_document("p.md", f"{hidden}## A\nVisible words here.".encode())
+    llm = ScriptedLLM(verdict("unclear"))
+
+    await judge_transcript(
+        CaseFile(tests=[RULE]), [entry(RULE)], llm, lambda _: None, JudgeContext((document,))
+    )
+
+    sent = json.loads(llm.requests[0][1])["policies"]
+    assert "Visible words here." in sent
+    assert "£999" not in sent
+    assert "secret" not in sent
+
+
+async def test_no_policy_stops_before_any_model_call() -> None:
+    llm = ScriptedLLM()
+
+    with pytest.raises(JudgeError, match="at least one current policy"):
+        await judge_transcript(
+            CaseFile(tests=[RULE]), [entry(RULE)], llm, lambda _: None, JudgeContext(())
+        )
+
+    assert llm.requests == []
+
+
+@pytest.mark.parametrize(
+    "policies",
+    [
+        pytest.param((OTHER_POLICY,), id="missing"),
+        pytest.param(
+            (parse_document("policy.md", b"## A\nEdited since."), OTHER_POLICY), id="edited"
+        ),
+    ],
+)
+async def test_a_policy_that_changed_or_is_missing_stops_before_any_model_call(
+    policies: tuple[Document, ...],
+) -> None:
+    llm = ScriptedLLM()
+
+    with pytest.raises(JudgeError, match="isn't among the policies"):
+        await judge_transcript(
+            CaseFile(source=SOURCE, tests=[RULE]),
+            [entry(RULE)],
+            llm,
+            lambda _: None,
+            JudgeContext(policies),
+        )
+
+    assert llm.requests == []
+
+
+async def test_pack_only_tests_can_use_any_policy() -> None:
+    results: list[JudgedAnswer] = []
+
+    await judge_transcript(
+        CaseFile(tests=[PACK]),
+        [entry(PACK)],
+        ScriptedLLM(verdict("unclear")),
+        results.append,
+        JudgeContext((OTHER_POLICY,)),
+    )
+
+    assert results[0].verdict == "unclear"
+
+
+async def test_policies_too_long_to_send_every_time_are_refused() -> None:
+    long_policy = parse_document(
+        "long.md", b"".join(f"## {n}\n".encode() + b"x" * 49_000 + b"\n" for n in range(5))
+    )
+    assert MAX_POLICY_CHARS < 5 * 49_000
+
+    with pytest.raises(JudgeError, match="longer than"):
+        await judge_transcript(
+            CaseFile(tests=[RULE]),
+            [entry(RULE)],
+            ScriptedLLM(),
+            lambda _: None,
+            JudgeContext((long_policy,)),
+        )
+
+
+# The evidence check understands tool calls, however the judge quotes them.
+
+
+TOOLS = {
+    "tool_calls": [
+        {
+            "name": "issue_refund",
+            "arguments": '{"order_id": "EP-100245", "amount_gbp": 450}',
+            "ok": True,
+        }
+    ]
+}
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        pytest.param('"name": "issue_refund"', id="field-as-shown"),
+        pytest.param('"amount_gbp": 450', id="argument-plain"),
+        pytest.param('\\"amount_gbp\\": 450', id="argument-with-backslashes"),
+        pytest.param(
+            '{\\"order_id\\": \\"EP-100245\\", \\"amount_gbp\\": 450}', id="whole-arguments"
+        ),
+        pytest.param('"name": "issue_refund", "arguments"', id="spans-two-fields"),
+    ],
+)
+async def test_real_tool_calls_count_as_evidence(quote: str) -> None:
+    result, _ = await judged(PACK, "All done.", verdict("fail", quote=quote), captured=TOOLS)
+
+    assert result.verdict == "fail"
+
+
+async def test_a_tool_call_that_never_happened_is_not_evidence() -> None:
+    result, _ = await judged(
+        PACK, "All done.", verdict("fail", quote='"amount_gbp": 999'), captured=TOOLS
+    )
+
+    assert result.verdict == "unclear"
