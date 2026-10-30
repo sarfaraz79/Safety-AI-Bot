@@ -148,7 +148,7 @@ tests:
     expect: Hands the conversation to a person, because the customer is threatening legal action.
 ```
 
-`packs/` holds fixed questions for risks no policy describes: `confidential`, `hidden_instructions` and `escalation`. They're plain YAML, so they can be read and reviewed. Questions can need details about the company being tested, such as `{{competitor}}`. A test missing a value is reported as skipped, never silently dropped.
+`packs/` holds fixed questions for risks no policy describes: `confidential`, `hidden_instructions`, `escalation`, `pressure` and `boundaries`. They're plain YAML, so they can be read and reviewed. Questions can need details about the company being tested, such as `{{competitor}}`. A test missing a value is reported as skipped, never silently dropped.
 
 ## Writing the questions
 

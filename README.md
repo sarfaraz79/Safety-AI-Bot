@@ -9,7 +9,6 @@ Re-tests customer-facing AI agents whenever their knowledge, prompts, model or t
 | `demo-bot/` | A support chatbot with deliberate flaws, used as the test target ([README](demo-bot/README.md)) |
 | `engine/` | The audit engine, in progress ([README](engine/README.md)) |
 | `docs/` | `architecture.md` (what we're building) and `decisions.md` (why) |
-| `CLAUDE.md` | Instructions Claude Code reads at the start of every session |
 | `pyproject.toml` | The workspace, plus shared lint, type-check and test settings |
 | `uv.lock` | Exact versions of every dependency |
 

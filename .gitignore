@@ -16,9 +16,13 @@ htmlcov/
 
 # Secrets and personal settings
 .env
+CLAUDE.md
 CLAUDE.local.md
 .claude/settings.local.json
 
 # OS files
 .DS_Store
 Thumbs.db
+
+# Results of real runs: they can hold confidential replies
+run-reports/
