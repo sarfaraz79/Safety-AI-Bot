@@ -2,7 +2,18 @@
 
 Tests a customer-facing AI agent against facts and rules taken from a company's own policy documents. The plan is in [docs/architecture.md](../docs/architecture.md).
 
-So far it can read a policy and produce a contract. The later commands (`generate`, `run`, `judge`, `report`) aren't built yet.
+It works in steps, with a person reviewing the contract in the middle:
+
+```sh
+uv run audit-engine extract policy.md -o contract.yaml
+# A person reviews contract.yaml and sets approved: true on each item they accept.
+uv run audit-engine generate contract.yaml --policy policy.md -o tests.yaml --value competitor="Acme Couriers" --value company="Example Parcels" --value order_ref=EP-100245
+uv run audit-engine run tests.yaml --target target.yaml -o transcript.jsonl
+```
+
+`judge` and `report`, which turn a transcript into results, aren't built yet. When a run covers several policies, pass `--no-packs` for all but one, so the pack questions aren't asked twice.
+
+A target's token is read from the environment, not from `.env`, so a bot's credentials and the engine's model key stay separate.
 
 ## Extract a contract
 
@@ -31,7 +42,7 @@ An existing contract is never replaced without `--force`, because that would los
 
 | Code | Job |
 |---|---|
-| `cli.py` | The command |
+| `cli.py`, `commands/` | The commands, one file each |
 | `config.py` | Settings |
 | `contract.py` | The contract format |
 | `documents.py` | Reads Markdown |

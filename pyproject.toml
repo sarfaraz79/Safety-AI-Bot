@@ -49,6 +49,10 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+"*/commands/*" = [
+    "PLR0913",  # a command's options are its function's arguments
+    "PLR0917",
+]
 "*/tests/*" = [
     "S101",     # assert is how pytest checks things
     "S104",     # tests use 0.0.0.0 as data, not to bind
