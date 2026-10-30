@@ -51,6 +51,7 @@ class Report(BaseModel):
     generated_at: datetime
     source: Source | None
     cut_short: bool
+    actions_not_checked: int = 0
     totals: Totals
     failed: list[TestSummary]
     unclear: list[TestSummary]
@@ -86,6 +87,7 @@ def build_report(
         generated_at=generated_at,
         source=results[0].source if results else None,
         cut_short=cut_short,
+        actions_not_checked=sum(result.action_unchecked for result in results),
         totals=Totals(
             tests=len(summaries),
             answers=sum(s.answers for s in summaries),

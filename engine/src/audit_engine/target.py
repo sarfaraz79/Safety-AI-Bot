@@ -33,6 +33,8 @@ class Target(BaseModel):
     request: dict[str, Any]
     reply_path: str = Field(pattern=_PATH)
     capture: dict[str, str] = Field(default_factory=dict)
+    # What standard tests call an action, and what this bot's tool for it is called.
+    actions: dict[str, str] = Field(default_factory=dict)
     token_env: str | None = Field(default=None, pattern=r"^[A-Z_][A-Z0-9_]*$")
     timeout_seconds: float = Field(default=60.0, gt=0, le=600)
 

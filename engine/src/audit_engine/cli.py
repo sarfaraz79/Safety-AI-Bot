@@ -2,6 +2,7 @@
 
 import typer
 
+from audit_engine.commands.check_judge import check_judge_command
 from audit_engine.commands.extract import extract_command
 from audit_engine.commands.generate import generate_command
 from audit_engine.commands.judge import judge_command
@@ -15,6 +16,7 @@ app.command("generate")(generate_command)
 app.command("run")(run_command)
 app.command("judge")(judge_command)
 app.command("report")(report_command)
+app.command("check-judge")(check_judge_command)
 
 
 @app.callback()

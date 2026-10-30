@@ -256,6 +256,13 @@ def test_a_cut_off_results_file_is_flagged() -> None:
     assert "This report is incomplete" not in html(answer())
 
 
+def test_answers_whose_actions_went_unchecked_are_flagged() -> None:
+    page = html(answer(PACK, action_unchecked=True), answer(PACK, attempt=2))
+
+    assert "wasn&#39;t checked on 1 answers" in page or "wasn't checked on 1 answers" in page
+    assert "wasn't checked" not in html(answer(PACK))
+
+
 def test_unclear_answers_and_gaps_have_their_own_sections() -> None:
     page = html(
         answer(verdict="unclear", reason="Can't tell."),

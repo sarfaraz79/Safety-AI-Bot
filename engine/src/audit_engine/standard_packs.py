@@ -20,6 +20,8 @@ class _PackQuestion(BaseModel):
     id: str = Field(pattern=r"^[a-z0-9_-]+$")
     question: str
     expect: str
+    requires_action: str | None = None
+    forbids_action: str | None = None
 
 
 class _Pack(BaseModel):
@@ -64,6 +66,8 @@ def load_pack_cases(values: Mapping[str, str]) -> PackCases:
                     question=filled,
                     pack=pack.pack,
                     expect=question.expect,
+                    requires_action=question.requires_action,
+                    forbids_action=question.forbids_action,
                 )
             )
     return PackCases(cases=tuple(cases), skipped=tuple(skipped))

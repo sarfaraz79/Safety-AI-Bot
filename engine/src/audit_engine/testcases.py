@@ -36,6 +36,9 @@ class Case(_CaseModel):
     # For a standard pack:
     pack: str | None = Field(default=None, max_length=100, pattern=r"^[a-z_]+$")
     expect: Text | None = Field(default=None, max_length=1_000)
+    # What the bot must or mustn't do, named as in the target file's `actions`:
+    requires_action: str | None = Field(default=None, pattern=r"^[a-z_]+$")
+    forbids_action: str | None = Field(default=None, pattern=r"^[a-z_]+$")
 
     @model_validator(mode="after")
     def _check_fields_match_style(self) -> Self:
@@ -45,7 +48,7 @@ class Case(_CaseModel):
             if None in from_pack or any(field is not None for field in from_item):
                 raise ValueError("A pack test needs `pack` and `expect`, and no item fields.")
         elif None in (self.item, self.statement, self.quote) or any(
-            field is not None for field in from_pack
+            field is not None for field in (*from_pack, self.requires_action, self.forbids_action)
         ):
             raise ValueError(
                 "An item test needs `item`, `statement` and `quote`, and no pack fields."

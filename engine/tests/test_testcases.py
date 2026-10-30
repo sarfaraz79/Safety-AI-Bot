@@ -124,6 +124,9 @@ def test_a_rule_has_no_expected_value() -> None:
         pytest.param(pack_case(expected_value="£50"), id="pack-test-with-value"),
         pytest.param(pack_case(pack="Has Spaces"), id="bad-pack-name"),
         pytest.param(pack_case(unknown=True), id="unknown-field"),
+        pytest.param(item_case(requires_action="hand_over"), id="item-test-requiring-an-action"),
+        pytest.param(item_case(forbids_action="refund"), id="item-test-forbidding-an-action"),
+        pytest.param(pack_case(requires_action="Has Spaces"), id="bad-action-name"),
     ],
 )
 def test_bad_tests_are_refused(case: dict[str, Any]) -> None:
