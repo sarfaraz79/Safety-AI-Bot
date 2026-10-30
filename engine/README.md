@@ -39,6 +39,7 @@ An existing contract is never replaced without `--force`, because that would los
 | `extract.py` | Asks the model and sorts its suggestions |
 | `llm.py` | The model connection |
 | `generate.py` | Writes questions from approved items |
+| `run.py`, `transcripts.py` | Asks the questions and saves the answers |
 | `target.py` | The target file, and talking to a bot |
 | `testcases.py` | The test file format |
 | `standard_packs.py` | Loads the fixed test packs in `packs/` |
@@ -162,4 +163,8 @@ A target file describes how to reach any bot with a web endpoint, so testing a n
 | `timeout_seconds` | How long to wait for the whole response, 60 by default |
 
 A bot is treated as untrusted. Redirects are never followed, so a bot can't send the token elsewhere. Responses over 1 MB are cut off. Timeouts, bad JSON, error codes and missing replies all become recorded failures, never crashes.
+
+## Asking the questions
+
+`run.py` puts each test's question to the bot and saves every answer to a transcript the moment it arrives, so a crash keeps what's done. Each question is asked once before any is asked again, so a run that stops early still covers every test evenly. Requests are limited by how many run at once and how many start per second, because every request costs the bot's owner money.
 
