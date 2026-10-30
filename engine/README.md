@@ -9,9 +9,10 @@ uv run audit-engine extract policy.md -o contract.yaml
 # A person reviews contract.yaml and sets approved: true on each item they accept.
 uv run audit-engine generate contract.yaml --policy policy.md -o tests.yaml --value competitor="Acme Couriers" --value company="Example Parcels" --value order_ref=EP-100245
 uv run audit-engine run tests.yaml --target target.yaml -o transcript.jsonl
+uv run audit-engine judge transcript.jsonl --tests tests.yaml -o results.jsonl
 ```
 
-`judge` and `report`, which turn a transcript into results, aren't built yet. When a run covers several policies, pass `--no-packs` for all but one, so the pack questions aren't asked twice.
+`report`, which presents the results, isn't built yet. When a run covers several policies, pass `--no-packs` for all but one, so the pack questions aren't asked twice.
 
 A target's token is read from the environment, not from `.env`, so a bot's credentials and the engine's model key stay separate.
 
@@ -50,6 +51,7 @@ An existing contract is never replaced without `--force`, because that would los
 | `extract.py` | Asks the model and sorts its suggestions |
 | `llm.py` | The model connection |
 | `generate.py` | Writes questions from approved items |
+| `judge.py`, `results.py` | Decides whether each answer was right |
 | `run.py`, `transcripts.py` | Asks the questions and saves the answers |
 | `target.py` | The target file, and talking to a bot |
 | `testcases.py` | The test file format |
@@ -178,4 +180,22 @@ A bot is treated as untrusted. Redirects are never followed, so a bot can't send
 ## Asking the questions
 
 `run.py` puts each test's question to the bot and saves every answer to a transcript the moment it arrives, so a crash keeps what's done. Each question is asked once before any is asked again, so a run that stops early still covers every test evenly. Requests are limited by how many run at once and how many start per second, because every request costs the bot's owner money.
+
+## Judging the answers
+
+`judge.py` gives each answer a verdict. It uses no RAG or search: each test already carries the policy quote it's checked against.
+
+| Verdict | Meaning |
+|---|---|
+| `pass` | The answer was right |
+| `fail` | The answer was wrong, with the words that show it |
+| `unclear` | Nobody can say from this evidence, so a person must check |
+| `error` | The bot gave no usable reply, so there was nothing to judge |
+| `not_run` | The test has no answer in the transcript |
+
+1. **Automatic check, with no model.** If a fact expects an amount and the reply gives only different amounts, it fails: "£500" against "£50".
+2. **The model** judges everything else, seeing the question, the reply, what was captured, and what a correct answer looks like. The bot's reply is sent as data.
+3. **Code checks the model's work.** A failure must quote words that really are in the reply or in what the bot did, and a pass on a fact needs the reply to state the value. Otherwise the verdict becomes `unclear`.
+
+So a pass is never assumed, and doubt goes to a person. **The judge's accuracy hasn't been measured yet.** Nobody should rely on its verdicts until it has been checked against hand-marked results.
 

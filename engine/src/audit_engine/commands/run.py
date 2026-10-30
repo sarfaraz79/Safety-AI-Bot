@@ -3,7 +3,7 @@
 import asyncio
 import os
 from pathlib import Path
-from typing import Annotated, TextIO
+from typing import Annotated
 
 import typer
 
@@ -48,7 +48,7 @@ def run_command(
 ) -> None:
     """Put a test file's questions to a bot, and save every answer as it arrives."""
     common.check_outputs([output], [tests_path, target_path], force=force)
-    cases = _read_tests(tests_path)
+    cases = read_tests(tests_path)
     target = _read_target(target_path)
     try:
         token = read_token(target, os.environ)
@@ -74,7 +74,7 @@ def make_target_client(target: Target, token: str | None) -> TargetClient:
     return TargetClient(target, token)
 
 
-def _read_tests(path: Path) -> CaseFile:
+def read_tests(path: Path) -> CaseFile:
     text = common.read_text(path, limit=MAX_TESTS_FILE_CHARS)
     try:
         return parse_cases(text)
@@ -90,17 +90,11 @@ def _read_target(path: Path) -> Target:
         common.fail(f"Could not use {path}: {exc}")
 
 
-def _open_for_this_user(path: Path) -> TextIO:
-    """Transcripts can hold what a confidential bot said, so only this user may read them."""
-    descriptor = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
-    return os.fdopen(descriptor, "w", encoding="utf-8")
-
-
 async def _run(
     cases: list[Case], client: TargetClient, output: Path, limits: RunLimits
 ) -> RunSummary:
     try:
-        with _open_for_this_user(output) as file:
+        with common.open_for_this_user(output) as file:
 
             def record(entry: TranscriptEntry) -> None:
                 file.write(render_entry(entry))
