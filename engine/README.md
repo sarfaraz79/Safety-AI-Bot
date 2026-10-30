@@ -2,7 +2,17 @@
 
 Tests a customer-facing AI agent against facts and rules taken from a company's own policy documents. The plan is in [docs/architecture.md](../docs/architecture.md).
 
-So far this package holds the contract format, in `contract.py`. The `extract` command that produces contracts is being built next.
+So far this package holds the contract format (`contract.py`) and the Markdown reader (`documents.py`). The `extract` command that produces contracts is still being built.
+
+## Reading policy documents
+
+`documents.py` splits a Markdown document at its headings, at every level, keeping each section's exact words.
+
+- **Left out:** comments and front matter, because readers never see them. A hidden note must not become policy.
+- **Kept as text:** tables, lists and code blocks. A `#` inside a code block isn't a heading.
+- **Sections:** a heading with no text under it is skipped, and text before the first heading becomes `Untitled section`. Repeated headings are numbered, as in `FAQ (2)`, so each item points to one place.
+- **Refused:** files that aren't UTF-8 text, such as a renamed PDF. Also anything over 1 MB, 500 sections or 50,000 characters in a section, because each section costs one model call.
+- **Fingerprint:** it covers the original bytes, so any edit to the file changes it, even one that only changes line endings.
 
 ## The contract
 
