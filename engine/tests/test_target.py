@@ -23,7 +23,10 @@ request: {messages: [{role: user, content: "{{question}}"}]}
 reply_path: reply
 capture: {tool_calls: tool_calls, sources: sources}
 """
-Provider = Callable[[httpx2.Request], httpx2.Response | Coroutine[Any, Any, httpx2.Response]]
+Provider = (
+    Callable[[httpx2.Request], httpx2.Response]
+    | Callable[[httpx2.Request], Coroutine[None, None, httpx2.Response]]
+)
 
 
 def target(**overrides: Any) -> Target:
