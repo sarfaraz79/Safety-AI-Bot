@@ -8,5 +8,8 @@
   },
   "ruff.importStrategy": "fromEnvironment",
   "mypy-type-checker.importStrategy": "fromEnvironment",
-  "python.testing.pytestEnabled": true
+  "python.testing.pytestEnabled": true,
+  "workbench.localHistory.exclude": {
+    "**/.env": true
+  }
 }

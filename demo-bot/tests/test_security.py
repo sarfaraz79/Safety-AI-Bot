@@ -21,6 +21,11 @@ HTTP_SCOPE: Scope = {"type": "http", "method": "POST", "path": "/chat", "headers
         ("192.168.1.20", False),
         ("2001:db8::1", False),
         ("testclient", False),
+        ("", False),
+        ("localhost.evil.example", False),
+        ("127.0.0.1.evil.example", False),
+        ("::ffff:8.8.8.8", False),
+        ("[::1]", False),
         (None, False),
     ],
 )
@@ -85,6 +90,35 @@ async def test_chunked_body_over_limit_is_rejected_before_the_app_runs() -> None
     sent = await run(BodySizeLimitMiddleware(app, max_bytes=10), body_stream(b"123456", b"789012"))
 
     assert sent[0]["type"] == "http.response.start"
+    assert sent[0]["status"] == 413
+    assert app.body is None
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "chunks",
+    [
+        pytest.param((b"1234567890",), id="exactly-the-limit"),
+        pytest.param((b"1",) * 10, id="many-small-chunks"),
+        pytest.param((b"", b"12345", b""), id="empty-chunks"),
+        pytest.param((b"",), id="no-body"),
+    ],
+)
+async def test_bodies_within_the_limit_arrive_whole(chunks: tuple[bytes, ...]) -> None:
+    app = RecordingApp()
+
+    sent = await run(BodySizeLimitMiddleware(app, max_bytes=10), body_stream(*chunks))
+
+    assert sent == []
+    assert app.body == b"".join(chunks)
+
+
+@pytest.mark.anyio
+async def test_one_byte_over_the_limit_is_rejected() -> None:
+    app = RecordingApp()
+
+    sent = await run(BodySizeLimitMiddleware(app, max_bytes=10), body_stream(b"12345678901"))
+
     assert sent[0]["status"] == 413
     assert app.body is None
 

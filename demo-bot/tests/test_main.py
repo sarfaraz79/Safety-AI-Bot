@@ -42,6 +42,28 @@ def test_configuration_errors_never_echo_values(monkeypatch: pytest.MonkeyPatch)
     assert "sk-pasted" not in str(caught.value)
 
 
+def test_a_malformed_key_is_named_but_never_shown(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEMO_BOT_LLM_MODEL", "test-model")
+    monkeypatch.setenv("DEMO_BOT_LLM_API_KEY", "sk-ant secret with spaces")
+
+    with pytest.raises(SystemExit) as caught:
+        entry_point.main()
+
+    assert "DEMO_BOT_LLM_API_KEY: must contain only printable ASCII" in str(caught.value)
+    assert "secret with spaces" not in str(caught.value)
+
+
+def test_an_unencrypted_model_address_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEMO_BOT_LLM_MODEL", "test-model")
+    monkeypatch.setenv("DEMO_BOT_LLM_API_KEY", "test-key")
+    monkeypatch.setenv("DEMO_BOT_LLM_BASE_URL", "http://llm.example/v1")
+
+    with pytest.raises(SystemExit) as caught:
+        entry_point.main()
+
+    assert "DEMO_BOT_LLM_BASE_URL: must use https" in str(caught.value)
+
+
 def test_rule_violations_read_as_plain_sentences(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DEMO_BOT_LLM_MODEL", "test-model")
     monkeypatch.setenv("DEMO_BOT_LLM_API_KEY", "test-key")

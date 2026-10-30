@@ -8,6 +8,7 @@ import pytest
 from demo_bot.llm import (
     AssistantMessage,
     LLMError,
+    LLMResponse,
     Message,
     OpenAICompatibleClient,
     SystemMessage,
@@ -145,11 +146,106 @@ async def test_provider_errors_become_llm_errors_without_details() -> None:
     assert str(caught.value) == "AuthenticationError"
 
 
-async def test_reply_without_choices_is_an_error() -> None:
-    provider = FakeProvider(200, {**completion({}), "choices": []})
+def tool_call(function: object) -> dict[str, Any]:
+    call = {"id": "call-1", "type": "function", "function": function}
+    return {"role": "assistant", "content": None, "tool_calls": [call]}
 
-    with pytest.raises(LLMError, match="no choices"):
+
+def raw(content: bytes, content_type: str = "application/json") -> httpx2.Response:
+    return httpx2.Response(200, content=content, headers={"content-type": content_type})
+
+
+def as_json(body: object) -> httpx2.Response:
+    return raw(json.dumps(body).encode())
+
+
+@pytest.mark.parametrize(
+    "unusable",
+    [
+        pytest.param(raw(b"<html>boom</html>", "text/html"), id="html-page"),
+        pytest.param(raw(b"{boom"), id="broken-json"),
+        pytest.param(raw(b""), id="empty"),
+        pytest.param(as_json([]), id="array"),
+        pytest.param(as_json("boom"), id="string"),
+        pytest.param(as_json({"error": {"message": "boom"}}), id="error-without-status"),
+        pytest.param(as_json({"choices": None}), id="null-choices"),
+        pytest.param(as_json({"choices": []}), id="no-choices"),
+        pytest.param(as_json({"choices": [{}]}), id="empty-choice"),
+        pytest.param(as_json({"choices": [{"message": None}]}), id="null-message"),
+        pytest.param(as_json(completion({"content": 5})), id="number-content"),
+        pytest.param(as_json(completion({"content": [{"text": "boom"}]})), id="list-content"),
+        pytest.param(raw(b'{"choices":[{"message":{"content":"\\ud800"}}]}'), id="surrogate"),
+        pytest.param(as_json(completion(tool_call(None))), id="null-function"),
+        pytest.param(
+            as_json(completion(tool_call({"name": None, "arguments": "{}"}))), id="null-tool-name"
+        ),
+        pytest.param(
+            as_json(completion(tool_call({"name": "", "arguments": "{}"}))), id="empty-tool-name"
+        ),
+        pytest.param(
+            as_json(completion(tool_call({"name": "x", "arguments": None}))), id="null-arguments"
+        ),
+        pytest.param(
+            as_json(completion(tool_call({"name": "x", "arguments": {"a": 1}}))),
+            id="object-arguments",
+        ),
+    ],
+)
+async def test_unusable_replies_become_llm_errors_without_details(
+    unusable: httpx2.Response,
+) -> None:
+    client = make_client(lambda _: unusable)
+
+    with pytest.raises(LLMError) as caught:
+        await client.complete([UserMessage("Hi")], [])
+
+    assert "boom" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        (httpx2.ConnectError("no route to secret-host"), "APIConnectionError"),
+        (httpx2.ReadTimeout("slow"), "APITimeoutError"),
+    ],
+)
+async def test_network_failures_become_llm_errors(failure: Exception, expected: str) -> None:
+    def provider(_: httpx2.Request) -> httpx2.Response:
+        raise failure
+
+    with pytest.raises(LLMError) as caught:
         await make_client(provider).complete([UserMessage("Hi")], [])
+
+    assert str(caught.value) == expected
+
+
+async def test_provider_errors_never_expose_the_api_key() -> None:
+    def provider(request: httpx2.Request) -> httpx2.Response:
+        key = request.headers["authorization"]
+        return httpx2.Response(400, json={"error": {"message": f"Bad key {key}"}})
+
+    with pytest.raises(LLMError) as caught:
+        await make_client(provider).complete([UserMessage("Hi")], [])
+
+    assert "test-key" not in str(caught.value)
+
+
+async def test_reply_with_text_and_tool_calls_keeps_both() -> None:
+    message = {**tool_call({"name": "x", "arguments": "{}"}), "content": "One moment."}
+    provider = FakeProvider(200, completion(message))
+
+    response = await make_client(provider).complete([UserMessage("Hi")], [])
+
+    assert response.content == "One moment."
+    assert response.tool_calls == (ToolCall("call-1", "x", "{}"),)
+
+
+async def test_reply_with_neither_text_nor_tool_calls_is_empty_not_an_error() -> None:
+    provider = FakeProvider(200, completion({"role": "assistant", "content": None}))
+
+    response = await make_client(provider).complete([UserMessage("Hi")], [])
+
+    assert response == LLMResponse(content=None)
 
 
 async def test_close_releases_the_http_client() -> None:
