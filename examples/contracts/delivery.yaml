@@ -8,56 +8,56 @@ items:
   value: 2 to 4 working days
   section: Delivery options
   quote: Standard delivery (2 to 4 working days, £3.99)
-  approved: false
+  approved: true
 - id: delivery-2
   kind: fact
   statement: Standard delivery costs £3.99.
   value: £3.99
   section: Delivery options
   quote: Standard delivery (2 to 4 working days, £3.99)
-  approved: false
+  approved: true
 - id: delivery-3
   kind: fact
   statement: Next-Day delivery orders must be placed by 6pm.
   value: 6pm
   section: Delivery options
   quote: Next-Day delivery (order by 6pm, £7.99)
-  approved: false
+  approved: true
 - id: delivery-4
   kind: fact
   statement: Next-Day delivery costs £7.99.
   value: £7.99
   section: Delivery options
   quote: Next-Day delivery (order by 6pm, £7.99)
-  approved: false
+  approved: true
 - id: delivery-5
   kind: fact
   statement: Deliveries are made Monday to Saturday.
   value: Monday to Saturday
   section: Delivery options
   quote: We deliver Monday to Saturday across mainland UK.
-  approved: false
+  approved: true
 - id: delivery-6
   kind: fact
   statement: Deliveries cover mainland UK.
   value: mainland UK
   section: Delivery options
   quote: We deliver Monday to Saturday across mainland UK.
-  approved: false
+  approved: true
 - id: delivery-7
   kind: fact
   statement: Every order has a reference that starts with EP-.
   value: EP-
   section: Tracking a parcel
   quote: Every order has a reference starting with EP-
-  approved: false
+  approved: true
 - id: delivery-8
   kind: fact
   statement: Tracking updates within 2 hours of each scan.
   value: 2 hours
   section: Tracking a parcel
   quote: Tracking updates within 2 hours of each scan.
-  approved: false
+  approved: true
 - id: delivery-9
   kind: rule
   statement: If a parcel arrives more than 2 working days after its estimated delivery date, the company
@@ -65,51 +65,51 @@ items:
   section: Late deliveries
   quote: If a parcel arrives more than 2 working days after its estimated delivery date, we refund the
     delivery charge.
-  approved: false
-- id: delivery-10
-  kind: fact
-  statement: A late parcel is one that arrives more than 2 working days after its estimated delivery date.
-  value: 2 working days
-  section: Late deliveries
-  quote: more than 2 working days after its estimated delivery date
-  approved: false
+  approved: true
 - id: delivery-11
   kind: rule
   statement: Support agents can issue a late delivery refund directly.
   section: Late deliveries
   quote: Support agents can issue this refund directly
-  approved: false
+  approved: true
 - id: delivery-12
   kind: fact
   statement: The maximum amount support agents can refund directly for a late delivery is £15.
   value: £15
   section: Late deliveries
   quote: up to a maximum of £15
-  approved: false
+  approved: true
 - id: delivery-13
   kind: rule
   statement: A late delivery does not entitle the customer to any compensation other than the delivery
     charge refund.
   section: Late deliveries
   quote: A late delivery does not entitle the customer to any other compensation.
-  approved: false
+  approved: true
 - id: delivery-14
   kind: rule
   statement: If nobody is in for a delivery, the driver must leave a card and try again the next working
     day.
   section: Missed deliveries
   quote: the driver leaves a card and tries again the next working day
-  approved: false
+  approved: true
 - id: delivery-15
   kind: rule
   statement: After two delivery attempts, the parcel must be taken to the nearest pickup point.
   section: Missed deliveries
   quote: After two attempts the parcel goes to the nearest pickup point
-  approved: false
+  approved: true
 - id: delivery-16
   kind: fact
   statement: A parcel sent to a pickup point is kept there for 7 days.
   value: 7 days
   section: Missed deliveries
   quote: where it is kept for 7 days
-  approved: false
+  approved: true
+- id: delivery-17
+  kind: fact
+  statement: Customers can track a parcel on the website or app.
+  value: website or app
+  section: Tracking a parcel
+  quote: Customers can track it on our website or app.
+  approved: true

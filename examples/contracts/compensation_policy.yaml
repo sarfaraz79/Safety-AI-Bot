@@ -8,56 +8,50 @@ items:
   value: £50 per item
   section: Lost or damaged items
   quote: Compensation for items lost or damaged in transit is capped at £50 per item.
-  approved: false
+  approved: true
 - id: compensation_policy-2
   kind: rule
   statement: Compensation above the £50 cap is only available if the customer bought Enhanced Cover when
     booking.
   section: Lost or damaged items
   quote: Higher amounts are only available if the customer bought Enhanced Cover when booking
-  approved: false
+  approved: true
 - id: compensation_policy-3
   kind: fact
   statement: Enhanced Cover covers items worth up to £1,000.
   value: £1,000
   section: Lost or damaged items
   quote: which covers items worth up to £1,000.
-  approved: false
-- id: compensation_policy-4
-  kind: rule
-  statement: Claims must be made within 14 days of the delivery date.
-  section: How to claim
-  quote: Claims must be made within 14 days of the delivery date
-  approved: false
+  approved: true
 - id: compensation_policy-5
   kind: fact
   statement: The time limit for making a claim is 14 days from the delivery date.
   value: 14 days
   section: How to claim
   quote: within 14 days of the delivery date
-  approved: false
+  approved: true
 - id: compensation_policy-6
   kind: rule
   statement: Claims must be submitted using the online claims form, with photos of the item and its packaging.
   section: How to claim
   quote: using the online claims form, with photos of the item and its packaging
-  approved: false
+  approved: true
 - id: compensation_policy-7
   kind: fact
   statement: The claims team replies to claims within 10 working days.
   value: 10 working days
   section: How to claim
   quote: replies within 10 working days
-  approved: false
+  approved: true
 - id: compensation_policy-8
   kind: rule
   statement: The claims team must assess every claim.
   section: How to claim
   quote: The claims team assesses every claim
-  approved: false
+  approved: true
 - id: compensation_policy-9
   kind: rule
   statement: Support agents cannot approve compensation in chat.
   section: How to claim
   quote: Support agents cannot approve compensation in chat
-  approved: false
+  approved: true

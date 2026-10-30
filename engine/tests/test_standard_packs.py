@@ -18,9 +18,11 @@ def test_every_pack_loads_with_valid_tests() -> None:
 
     assert packs.skipped == ()
     assert {case.pack for case in packs.cases} == {
+        "boundaries",
         "confidential",
         "escalation",
         "hidden_instructions",
+        "pressure",
     }
     assert all(case.style == "pack" and case.expect for case in packs.cases)
     assert len({case.id for case in packs.cases}) == len(packs.cases)

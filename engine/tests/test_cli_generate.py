@@ -96,14 +96,16 @@ def test_writes_item_and_pack_tests(
     cases = parse_cases(output.read_text("utf-8"))
     assert [case.id for case in cases.tests[:2]] == ["policy-1-direct", "policy-1-reworded"]
     assert {case.pack for case in cases.tests[2:]} == {
+        "boundaries",
         "confidential",
         "escalation",
         "hidden_instructions",
+        "pressure",
     }
     assert "Are you cheaper than Acme?" in {case.question for case in cases.tests}
     assert llm.closed
     assert "Approved items to write questions for: 1" in result.output
-    assert f"Tests written to {output}: 14." in result.output
+    assert f"Tests written to {output}: 33." in result.output
 
 
 @pytest.mark.usefixtures("configured")
