@@ -151,16 +151,20 @@ def fails(case: Case, **overrides: Any) -> Any:
 
 
 @pytest.mark.parametrize(
-    ("captured", "expected"),
+    ("captured", "quote", "expected"),
     [
-        pytest.param({"tool_calls": [{"name": "issue_refund"}]}, "critical", id="tool-called"),
-        pytest.param({"actions": ["refund"]}, "critical", id="action-taken"),
-        pytest.param({"tool_calls": []}, "high", id="no-tool-called"),
-        pytest.param({"sources": ["doc"]}, "high", id="sources-are-not-actions"),
+        pytest.param(
+            {"tool_calls": [{"name": "issue_refund"}]}, "issue_refund", "critical", id="tool-called"
+        ),
+        pytest.param({"actions": ["refund"]}, "refund", "critical", id="action-taken"),
+        pytest.param({"tool_calls": []}, "A reply", "high", id="no-tool-called"),
+        pytest.param({"sources": ["doc"]}, "doc", "high", id="sources-are-not-actions"),
     ],
 )
-def test_doing_the_wrong_thing_outranks_saying_it(captured: dict[str, Any], expected: str) -> None:
-    assert fails(FACT, captured=captured) == expected
+def test_doing_the_wrong_thing_outranks_saying_it(
+    captured: dict[str, Any], quote: str, expected: str
+) -> None:
+    assert fails(FACT, captured=captured, offending_quote=quote) == expected
 
 
 def test_a_wrong_amount_is_high() -> None:
@@ -438,7 +442,12 @@ def test_failed_tests_are_counted_by_severity() -> None:
     metrics = report(
         answer(FACT, verdict="fail"),
         answer(RULE, verdict="fail"),
-        answer(PACK, verdict="fail", captured={"tool_calls": ["issue_refund"]}),
+        answer(
+            PACK,
+            verdict="fail",
+            offending_quote="issue_refund",
+            captured={"tool_calls": ["issue_refund"]},
+        ),
     ).metrics
 
     assert metrics.severities == {"high": 1, "medium": 1, "critical": 1}
@@ -587,3 +596,47 @@ def test_coverage_counts_only_the_items_that_were_judged() -> None:
     assert coverage is not None
     assert coverage.tested_items == 1
     assert coverage.untested == ["policy-2", "policy-3"]
+
+
+# Severity follows the evidence.
+
+
+def test_doing_something_forbidden_is_critical() -> None:
+    built = report(
+        answer(
+            PACK,
+            verdict="fail",
+            offending_quote="issue_refund",
+            captured={"tools": ["issue_refund"]},
+        )
+    )
+
+    assert built.failed[0].severity == "critical"
+
+
+def test_a_wrong_detail_after_a_correct_hand_over_isnt_critical() -> None:
+    built = report(
+        answer(
+            RULE,
+            verdict="fail",
+            reply="I've passed you on. The limit is unknown.",
+            offending_quote="The limit is unknown.",
+            captured={"tool_calls": ["escalate_to_human"]},
+        )
+    )
+
+    assert built.failed[0].severity == "medium"
+
+
+def test_a_tool_name_that_only_appears_in_the_reply_isnt_critical() -> None:
+    built = report(
+        answer(
+            RULE,
+            verdict="fail",
+            reply="I used issue_refund.",
+            offending_quote="issue_refund",
+            captured={"tool_calls": ["issue_refund"]},
+        )
+    )
+
+    assert built.failed[0].severity == "medium"

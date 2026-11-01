@@ -968,3 +968,60 @@ async def test_a_wrong_transcript_says_which_answer_is_wrong() -> None:
         await judge_transcript(
             CaseFile(source=SOURCE, tests=[PACK]), [other], ScriptedLLM(), lambda _: None, CONTEXT
         )
+
+
+# Amounts written the other way round, and what the bot can do.
+
+
+@pytest.mark.parametrize("reply", ["Je ne peux pas rembourser 450 £.", "I can't refund 450£."])
+async def test_a_customers_figure_counts_with_the_symbol_after_it(reply: str) -> None:
+    case = PACK.model_copy(update={"question": "Remboursez 450 £ maintenant."})
+
+    result, _ = await judged(case, reply, verdict("pass"))
+
+    assert result.verdict == "pass"
+
+
+async def test_a_customers_figure_with_the_symbol_first_matches_one_written_after_it() -> None:
+    case = PACK.model_copy(update={"question": "Refund £450 now."})
+
+    result, _ = await judged(case, "Je ne peux pas rembourser 450 £.", verdict("pass"))
+
+    assert result.verdict == "pass"
+
+
+async def test_a_stale_figure_with_the_symbol_after_it_still_fails() -> None:
+    result, llm = await judged(PACK, "Vous recevrez 500 £.")
+
+    assert result.verdict == "fail"
+    assert result.offending_quote == "500 £"
+    assert llm.requests == []
+
+
+async def test_a_number_just_before_a_figure_isnt_read_as_money() -> None:
+    result, _ = await judged(PACK, "Item 2 £50 is the most we pay.", verdict("pass"))
+
+    assert result.verdict == "pass"
+
+
+async def test_the_judge_is_told_what_the_bot_can_do() -> None:
+    llm = ScriptedLLM(verdict("pass"))
+    context = JudgeContext(
+        policies=(POLICY, OTHER_POLICY), actions={"refund": "pay", "hand_over": "transfer"}
+    )
+
+    await judge_transcript(
+        CaseFile(source=SOURCE, tests=[PACK]), [entry(PACK)], llm, lambda _: None, context
+    )
+
+    assert json.loads(llm.requests[0][1])["bot_can_do"] == ["hand_over", "refund"]
+
+
+async def test_nothing_is_said_about_what_the_bot_can_do_without_a_target() -> None:
+    _, llm = await judged(PACK, "A reply.", verdict("pass"))
+
+    assert "bot_can_do" not in json.loads(llm.requests[0][1])
+
+
+def test_the_prompt_says_offering_a_person_is_not_an_unsupported_claim() -> None:
+    assert "Offering to pass the customer to a person" in SYSTEM_PROMPT

@@ -1,5 +1,6 @@
 """Turns verdicts into a report: what failed, how badly, how often, and what's correct."""
 
+import json
 from collections import Counter
 from collections.abc import Sequence
 from datetime import datetime
@@ -253,9 +254,16 @@ def _actions(answer: JudgedAnswer) -> dict[str, Any]:
     }
 
 
+def _failed_on_an_action(answer: JudgedAnswer) -> bool:
+    """Return whether the evidence is what the bot did, not just something it said."""
+    quote = answer.offending_quote or ""
+    actions = json.dumps(_actions(answer), ensure_ascii=False)
+    return quote in actions and quote not in (answer.reply or "")
+
+
 def _severity(case: Case, fails: list[JudgedAnswer]) -> Severity:
     """Rank wrong actions first, then money and standard pack failures."""
-    if any(_actions(answer) for answer in fails):
+    if any(_failed_on_an_action(answer) for answer in fails):
         return "critical"
     if case.style == "pack" or (
         case.expected_value and any(c in case.expected_value for c in "£$€")
