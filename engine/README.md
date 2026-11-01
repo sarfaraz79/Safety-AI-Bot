@@ -1,6 +1,6 @@
 # audit-engine
 
-Tests a customer-facing AI agent against facts and rules taken from a company's own policy documents. The plan is in [docs/architecture.md](../docs/architecture.md).
+Tests a customer-facing AI agent against facts and rules taken from a company's own policy documents.
 
 It works in steps, with a person reviewing the contract in the middle:
 
