@@ -3,19 +3,24 @@
 import asyncio
 import json
 import re
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, replace
 from typing import Any, Self
 
 import httpx2
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from audit_engine.fields import HEADER_SAFE, EncryptedUrl
+from audit_engine.transcripts import Turn
 from audit_engine.yaml_files import YamlFileError, load_model
 
 MAX_TARGET_CHARS = 100_000
 MAX_RESPONSE_BYTES = 1_000_000
 QUESTION_PLACEHOLDER = "{{question}}"
+CONVERSATION_PLACEHOLDER = "{{conversation}}"
+NO_CONVERSATION = (
+    "This test needs a conversation, but the target's `request` has no {{conversation}}."
+)
 
 _PATH = r"^[^.\s]+(\.[^.\s]+)*$"
 _SUCCESS = range(200, 300)
@@ -46,8 +51,10 @@ class Target(BaseModel):
 
     @model_validator(mode="after")
     def _check_question_has_a_place(self) -> Self:
-        if _fill(self.request, "") == self.request:
-            raise ValueError(f"`request` must contain {QUESTION_PLACEHOLDER}.")
+        if _fill(self.request, "", ()) == self.request:
+            raise ValueError(
+                f"`request` must contain {QUESTION_PLACEHOLDER} or {CONVERSATION_PLACEHOLDER}."
+            )
         return self
 
 
@@ -59,6 +66,7 @@ class Answer:
     captured: dict[str, Any]
     status: int | None
     error: str | None
+    earlier: tuple[Turn, ...] = ()
 
 
 def parse_target(text: str) -> Target:
@@ -90,11 +98,27 @@ class TargetClient:
         # Redirects stay off, so a bot can't send the token somewhere else.
         self._client = http_client or httpx2.AsyncClient(follow_redirects=False)
 
-    async def ask(self, question: str) -> Answer:
-        """Put one question to the bot. Every failure is returned as an Answer, never raised."""
+    async def ask(self, question: str, earlier: Sequence[str] = ()) -> Answer:
+        """Say each earlier message, then ask. Failures are returned as an Answer, never raised."""
+        if earlier and not _holds_conversation(self._target.request):
+            return _failed(None, NO_CONVERSATION)
+        turns: list[Turn] = []
+        captured: dict[str, Any] = {}
+        for message in earlier:
+            answer = await self._send(message, turns)
+            if answer.reply is None:
+                return replace(answer, earlier=tuple(turns))
+            turns.append(Turn(customer=message, bot=answer.reply))
+            captured = _merge_captured(captured, answer.captured)
+        answer = await self._send(question, turns)
+        return replace(
+            answer, captured=_merge_captured(captured, answer.captured), earlier=tuple(turns)
+        )
+
+    async def _send(self, question: str, turns: Sequence[Turn]) -> Answer:
         try:
             async with asyncio.timeout(self._target.timeout_seconds):
-                status, body = await self._post(question)
+                status, body = await self._post(question, turns)
         except (TimeoutError, httpx2.TimeoutException):
             return _failed(None, "The request timed out.")
         except httpx2.HTTPError:
@@ -108,9 +132,9 @@ class TargetClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def _post(self, question: str) -> tuple[int, bytes | None]:
+    async def _post(self, question: str, turns: Sequence[Turn]) -> tuple[int, bytes | None]:
         """Read the response in pieces, up to the size limit."""
-        payload = _fill(self._target.request, question)
+        payload = _fill(self._target.request, question, turns)
         async with self._client.stream(
             "POST", self._url, json=payload, headers=self._headers
         ) as response:
@@ -147,15 +171,48 @@ def _refuse_constant(name: str) -> None:
     raise ValueError(name)  # NaN and Infinity aren't JSON, though Python would accept them
 
 
-def _fill(template: object, question: str) -> Any:
+def _fill(template: object, question: str, turns: Sequence[Turn]) -> Any:
     """Put the question in place as data, leaving the request's shape unchanged."""
+    if template == CONVERSATION_PLACEHOLDER:
+        return _as_messages(question, turns)
     if isinstance(template, str):
         return template.replace(QUESTION_PLACEHOLDER, question)
     if isinstance(template, dict):
-        return {key: _fill(value, question) for key, value in template.items()}
+        return {key: _fill(value, question, turns) for key, value in template.items()}
     if isinstance(template, list):
-        return [_fill(value, question) for value in template]
+        return [_fill(value, question, turns) for value in template]
     return template
+
+
+def _as_messages(question: str, turns: Sequence[Turn]) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = []
+    for turn in turns:
+        messages.append({"role": "user", "content": turn.customer})
+        messages.append({"role": "assistant", "content": turn.bot})
+    messages.append({"role": "user", "content": question})
+    return messages
+
+
+def _holds_conversation(template: object) -> bool:
+    if isinstance(template, dict):
+        return any(_holds_conversation(value) for value in template.values())
+    if isinstance(template, list):
+        return any(_holds_conversation(value) for value in template)
+    return template == CONVERSATION_PLACEHOLDER
+
+
+def _merge_captured(earlier: dict[str, Any], latest: dict[str, Any]) -> dict[str, Any]:
+    """Keep what every turn did, so a refund in an early turn can't be missed."""
+    merged = {**earlier}
+    for name, value in latest.items():
+        previous = merged.get(name)
+        if isinstance(previous, list) and isinstance(value, list):
+            merged[name] = [*previous, *value]
+        elif value is not None:
+            merged[name] = value
+        else:
+            merged.setdefault(name, None)
+    return merged
 
 
 def _read_path(data: object, path: str) -> object:

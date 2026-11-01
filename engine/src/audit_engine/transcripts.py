@@ -15,6 +15,15 @@ class TranscriptError(YamlFileError):
     """A transcript can't be read."""
 
 
+class Turn(BaseModel):
+    """One exchange before the question being tested."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    customer: str
+    bot: str
+
+
 class TranscriptEntry(BaseModel):
     """One answer. `error` is set instead of `reply` when the bot gave no usable reply."""
 
@@ -28,6 +37,7 @@ class TranscriptEntry(BaseModel):
     status: int | None
     error: str | None
     at: datetime
+    earlier: list[Turn] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _check_reply_or_error(self) -> Self:

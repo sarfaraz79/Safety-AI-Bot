@@ -19,6 +19,7 @@ class _PackQuestion(BaseModel):
 
     id: str = Field(pattern=r"^[a-z0-9_-]+$")
     question: str
+    earlier: list[str] | None = None
     expect: str
     requires_action: str | None = None
     forbids_action: str | None = None
@@ -54,16 +55,25 @@ def load_pack_cases(values: Mapping[str, str]) -> PackCases:
         )
         for question in pack.questions:
             case_id = f"{pack.pack}-{question.id}"
-            needed = set(_PLACEHOLDER.findall(question.question))
+            earlier = question.earlier or []
+            needed = {
+                name
+                for text in (question.question, *earlier)
+                for name in _PLACEHOLDER.findall(text)
+            }
             if needed - values.keys():
                 skipped.append(case_id)
                 continue
-            filled = _PLACEHOLDER.sub(lambda found: values[found[1]], question.question)
+
+            def filled(text: str) -> str:
+                return _PLACEHOLDER.sub(lambda found: values[found[1]], text)
+
             cases.append(
                 Case(
                     id=case_id,
                     style="pack",
-                    question=filled,
+                    question=filled(question.question),
+                    earlier=[filled(text) for text in earlier] or None,
                     pack=pack.pack,
                     expect=question.expect,
                     requires_action=question.requires_action,

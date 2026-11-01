@@ -552,3 +552,11 @@ def test_headers_just_under_the_limit_are_accepted(make_client: ClientFactory) -
     assert (
         client.get("/health", headers={"x-big": "a" * (MAX_HEADER_BYTES // 2)}).status_code == 200
     )
+
+
+def test_a_one_character_message_is_a_real_message(make_client: ClientFactory) -> None:
+    response = make_client(ScriptedLLM(reply("Hi"))).post(
+        "/chat", json={"messages": [{"role": "user", "content": "x"}]}
+    )
+
+    assert response.status_code == 200

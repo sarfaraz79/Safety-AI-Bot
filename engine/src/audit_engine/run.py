@@ -45,7 +45,7 @@ class _Pacer:
 
 async def run_cases(
     cases: Sequence[Case],
-    ask: Callable[[str], Awaitable[Answer]],
+    ask: Callable[[str, Sequence[str]], Awaitable[Answer]],
     record: Callable[[TranscriptEntry], None],
     limits: RunLimits,
 ) -> RunSummary:
@@ -59,7 +59,7 @@ async def run_cases(
         nonlocal answered, failed
         for case, attempt in jobs:
             await pacer.wait()
-            answer = await ask(case.question)
+            answer = await ask(case.question, case.earlier or ())
             record(_as_entry(case, attempt, answer))
             if answer.error is None:
                 answered += 1
@@ -85,4 +85,5 @@ def _as_entry(case: Case, attempt: int, answer: Answer) -> TranscriptEntry:
         status=answer.status,
         error=answer.error,
         at=datetime.now(UTC),
+        earlier=list(answer.earlier),
     )

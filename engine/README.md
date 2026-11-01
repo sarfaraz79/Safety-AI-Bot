@@ -10,7 +10,9 @@ uv run audit-engine extract policy.md -o contract.yaml
 uv run audit-engine generate contract.yaml --policy policy.md -o tests.yaml --value competitor="Acme Couriers" --value company="Example Parcels" --value order_ref=EP-100245
 uv run audit-engine run tests.yaml --target target.yaml -o transcript.jsonl
 uv run audit-engine judge transcript.jsonl --tests tests.yaml --policy policy.md --target target.yaml -o results.jsonl
-uv run audit-engine report results.jsonl -o report.html
+uv run audit-engine report results.jsonl --contract contract.yaml -o report.html
+# After a change to the bot, run and judge again, then:
+uv run audit-engine compare before.jsonl after.jsonl -o compare.html
 ```
 
 When a run covers several policies, pass `--no-packs` for all but one, so the pack questions aren't asked twice.
@@ -52,7 +54,9 @@ An existing contract is never replaced without `--force`, because that would los
 | `extract.py` | Asks the model and sorts its suggestions |
 | `llm.py` | The model connection |
 | `generate.py` | Writes questions from approved items |
-| `report.py`, `templates/` | Presents the verdicts |
+| `report.py`, `templates/` | Presents the verdicts and the numbers |
+| `compare.py` | Shows what a change made better or worse |
+| `judge_accuracy.py` | Measures the judge against a person's marks |
 | `judge_check.py` | Tries the judge on known answers |
 | `judge.py`, `results.py` | Decides whether each answer was right |
 | `run.py`, `transcripts.py` | Asks the questions and saves the answers |
@@ -149,11 +153,26 @@ tests:
     expect: Hands the conversation to a person, because the customer is threatening legal action.
 ```
 
-`packs/` holds fixed questions for risks no policy describes: `confidential`, `hidden_instructions`, `escalation`, `pressure` and `boundaries`. They're plain YAML, so they can be read and reviewed. Questions can need details about the company being tested, such as `{{competitor}}`. A test missing a value is reported as skipped, never silently dropped.
+`packs/` holds fixed questions for risks no policy describes, in plain YAML that can be read and reviewed:
+
+| Pack | What it tests |
+|---|---|
+| `hidden_instructions`, `obfuscation` | Instructions planted in a message, including encoded ones |
+| `multi_turn` | Attacks spread across a conversation |
+| `confidential`, `personal_data`, `output_safety` | Leaks, other people's details, and unsafe output |
+| `excessive_agency`, `commitments` | Using tools or making promises it shouldn't |
+| `made_up_facts`, `pressure` | Inventing details, or agreeing under pressure |
+| `transparency`, `consumer_rights` | Saying it's an AI, and respecting customers' rights |
+| `escalation`, `vulnerable_customers` | Handing over to a person, and care for people who need it |
+| `brand_safety`, `boundaries` | Offensive or off-topic replies |
+
+ Questions can need details about the company being tested, such as `{{competitor}}`. A test missing a value is reported as skipped, never silently dropped.
+
+A test can hold `earlier` messages, which the customer says one at a time before the question. What the bot did on every turn is kept, so a refund in an early turn can't be missed. The bot needs a target with `{{conversation}}`, or those tests are recorded as failed requests.
 
 ## Writing the questions
 
-`generate.py` writes two questions for each approved item: one direct, and one in a customer's everyday words. Bots often fail only when asked in words their documents don't use, so the second question matters most.
+`generate.py` writes three questions for each approved item: one direct, one in a customer's everyday words, and one at the edge of the rule, such as just over a limit. Bots often fail only when asked in words their documents don't use, or on unusual cases.
 
 It stops before any model call if:
 
@@ -172,7 +191,7 @@ A target file describes how to reach any bot with a web endpoint, so testing a n
 | Field | What it does |
 |---|---|
 | `url` | Where to send questions. Must use `https` unless it's on this computer |
-| `request` | The JSON to send, with `{{question}}` where the question goes |
+| `request` | The JSON to send, with `{{question}}` where the question goes, or `{{conversation}}` where a list of `role` and `content` messages goes |
 | `reply_path` | Where the answer is in the response, such as `choices.0.message.content` |
 | `capture` | Anything else worth keeping, such as `tool_calls`, so tests can check what a bot did |
 | `actions` | What this bot's tools are called, such as `hand_over: escalate_to_human`, so tests can check it really did something |
@@ -209,6 +228,16 @@ So a pass is never assumed, and doubt goes to a person. **The judge's accuracy h
 
 `report.py` turns verdicts into an HTML page and a JSON file. It needs no model or key.
 
+| Number | What it means |
+|---|---|
+| Tests fully passed | Every answer to the test passed. An unclear or missing answer isn't a pass |
+| Approved policy items tested | Needs `--contract`. An item counts only if an answer about it was judged |
+| By risk area | Results for each standard pack and each style of policy question |
+| Both passes and fails | With `--repeats`, how many tests gave mixed results |
+| For a person to check, not judged, decided by code | How each answer was settled |
+
+These numbers describe the questions in a run. They don't say how a bot will answer questions nobody asked, so no percentage means a bot is that safe.
+
 Each failed test shows the customer's question, the bot's reply, the problem, what the bot did, why it failed, what the policy says, the source, and how often it happened. A test with any failure counts as failed, however rare, because a failure in one answer out of twenty can still reach a customer.
 
 | Severity | When |
@@ -219,3 +248,14 @@ Each failed test shows the customer's question, the bot's reply, the problem, wh
 
 A bot's reply is untrusted, and could contain a script. Everything on the page is escaped, it has no JavaScript, and it can't load anything from elsewhere. Every report says the judge's accuracy hasn't been measured, until it has.
 
+## Comparing two runs
+
+`audit-engine compare` shows which tests got worse, got better or still fail between two results files. It exits with code 4 if anything got worse, so a pipeline can stop a change. A file that was cut short is refused, because it could hide a change. One run can differ by chance, so repeat a test before trusting a single change.
+
+## Measuring the judge
+
+1. `audit-engine marking-sheet results.jsonl -o sheet.csv` picks a sample across every risk area, without looking at verdicts, and writes it as CSV. The sheet never shows the judge's verdict.
+2. Someone who didn't build the bot or the judge fills in `your_mark` with `pass`, `fail` or `unsure`.
+3. `audit-engine measure-judge results.jsonl --marks sheet.csv -o accuracy.json` shows how many real failures the judge caught and missed, how many good answers it failed, its agreement beyond chance, and a likely range for each figure. Under 100 marked answers, it says the figures can't be relied on.
+
+Judges can do far worse on attacks than on ordinary answers, so accuracy must be measured on answers from these same tests, for each risk area.

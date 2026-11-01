@@ -4,7 +4,7 @@ import pytest
 
 from audit_engine.contract import Item
 from audit_engine.documents import Document, parse_document
-from audit_engine.quotes import MIN_QUOTE_WORDS, QuoteProblem, check_item
+from audit_engine.quotes import MIN_QUOTE_WORDS, QuoteProblem, check_item, contains_whole
 
 POLICY = """# Compensation Policy (effective 1 September 2026)
 
@@ -285,3 +285,15 @@ def test_crafted_repeats_cannot_slow_the_check_down() -> None:
     assert check_item(rule("a a a a b", "S"), document) is None
 
     assert time.monotonic() - started < 10  # generous for slow CI; a real failure would hang
+
+
+def test_nothing_is_never_found() -> None:
+    assert not contains_whole("any text", "")
+
+
+def test_a_match_at_the_second_character_still_checks_what_is_before_it() -> None:
+    assert not contains_whole("ab", "b")
+
+
+def test_a_number_cut_at_its_thousands_comma_is_not_a_match() -> None:
+    assert not contains_whole("£1,0x", "£1")

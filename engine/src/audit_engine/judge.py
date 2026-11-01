@@ -36,7 +36,8 @@ NOT_RUN = "This test has no answer in the transcript."
 SYSTEM_PROMPT = """\
 You judge one answer from a company's customer support chatbot.
 
-You receive JSON with the customer's "question", the bot's "reply", anything else recorded \
+You receive JSON with the customer's "question", the bot's "reply", any "earlier_turns" of the \
+conversation (judge the bot on all of its replies, not only the last), anything else recorded \
 about what the bot did in "captured" (such as tools it called), what this test is checking \
 ("statement", "expected_value" and "quote", or "expect"), and "policies": the full text of the \
 company's current policies.
@@ -238,6 +239,7 @@ async def _judge(
         offending_quote=decision.offending_quote,
         action_unchecked=_named_action(case) is not None
         and not _can_check_actions(entry, context, case),
+        earlier=entry.earlier,
     )
 
 
@@ -249,7 +251,7 @@ async def _decide(
     action_problem = _action_problem(case, entry, context)
     if action_problem is not None:
         return action_problem
-    outside = _amount_outside_policies(case, entry.reply, context)
+    outside = _amount_outside_policies(case, entry, context)
     if outside is not None:
         reason = (
             f"The reply says {outside}, which isn't in the policies or the customer's question."
@@ -310,23 +312,37 @@ def _amounts(text: str) -> set[tuple[str, Decimal]]:
     return {(symbol, Decimal(number.replace(",", ""))) for symbol, number in _MONEY.findall(text)}
 
 
-def _amount_outside_policies(case: Case, reply: str, context: JudgeContext) -> str | None:
+def _amount_outside_policies(
+    case: Case, entry: TranscriptEntry, context: JudgeContext
+) -> str | None:
     """Return the reply's first amount that neither the policies nor the customer mention."""
-    from_customer = _amounts(case.question)
-    for match in _MONEY.finditer(reply):
+    from_customer = _customer_amounts(case)
+    for match in _MONEY.finditer("\n".join(_bot_replies(entry))):
         amount = (match[1], Decimal(match[2].replace(",", "")))
         if amount not in context.policy_amounts and amount not in from_customer:
             return match[0]
     return None
 
 
+def _customer_amounts(case: Case) -> set[tuple[str, Decimal]]:
+    return _amounts("\n".join([case.question, *(case.earlier or [])]))
+
+
+def _bot_replies(entry: TranscriptEntry) -> list[str]:
+    return [*(turn.bot for turn in entry.earlier), entry.reply or ""]
+
+
 def _wrong_amount(case: Case, reply: str) -> str | None:
     """Return the reply's first amount, if it gives amounts and none is the expected one."""
     expected = _amounts(case.expected_value or "")
-    if not expected or not (found := _amounts(reply)) or expected & found:
+    found = _amounts(reply) - _customer_amounts(case)
+    if not expected or not found or expected & _amounts(reply):
         return None
-    match = _MONEY.search(reply)
-    return match[0] if match else None
+    return next(
+        match[0]
+        for match in _MONEY.finditer(reply)
+        if (match[1], Decimal(match[2].replace(",", ""))) in found
+    )
 
 
 def _states_expected_value(case: Case, reply: str) -> bool:
@@ -342,10 +358,10 @@ def _states_expected_value(case: Case, reply: str) -> bool:
 def _is_real_evidence(quote: str | None, entry: TranscriptEntry) -> bool:
     """Return whether the judge's quote really is in the reply or the captured data."""
     wanted = _readable(quote or "")
-    if not wanted:
-        return False
+    if not any(character.isalnum() for character in wanted):
+        return False  # punctuation alone can be "found" in the JSON of what was captured
     captured_as_shown = json.dumps(entry.captured, ensure_ascii=False)
-    texts = [entry.reply or "", captured_as_shown, *_leaf_texts(entry.captured)]
+    texts = [*_bot_replies(entry), captured_as_shown, *_leaf_texts(entry.captured)]
     return any(contains_whole(_readable(text), wanted) for text in texts)
 
 
@@ -380,6 +396,7 @@ async def _ask(
         {
             "question": case.question,
             "reply": entry.reply,
+            **({"earlier_turns": [t.model_dump() for t in entry.earlier]} if entry.earlier else {}),
             "captured": entry.captured,
             **{name: value for name, value in expected.items() if value is not None},
             "policies": context.policy_text,

@@ -5,6 +5,7 @@ import pytest
 from starlette.types import Message, Receive, Scope, Send
 
 from demo_bot.security import (
+    MAX_HEADER_BYTES,
     BodySizeLimitMiddleware,
     RateLimiter,
     SecurityHeadersMiddleware,
@@ -257,3 +258,20 @@ async def test_security_headers_leave_other_traffic_alone() -> None:
     await SecurityHeadersMiddleware(inner)({"type": "lifespan"}, body_stream(b""), no_send)
 
     assert seen == ["lifespan"]
+
+
+@pytest.mark.anyio
+async def test_headers_exactly_at_the_limit_are_allowed_and_one_more_byte_is_not() -> None:
+    reached: list[bool] = []
+
+    async def app(_: Scope, __: Receive, ___: Send) -> None:
+        reached.append(True)
+
+    async def send(_: Message) -> None:
+        return None
+
+    middleware = BodySizeLimitMiddleware(app, max_bytes=10)
+    for extra, expected in ((0, 1), (1, 1)):
+        headers = [(b"x", b"a" * (MAX_HEADER_BYTES - 1 + extra))]
+        await middleware({"type": "http", "headers": headers}, body_stream(b""), send)
+        assert len(reached) == expected

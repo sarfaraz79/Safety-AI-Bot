@@ -30,7 +30,11 @@ Support agents cannot approve compensation in chat.
 CAP_QUOTE = "capped at £50 per item"
 CHAT_QUOTE = "Support agents cannot approve compensation in chat."
 GOOD = json.dumps(
-    {"direct": "What is the cap on compensation?", "reworded": "My vase smashed. How much back?"}
+    {
+        "direct": "What is the cap on compensation?",
+        "reworded": "My vase smashed. How much back?",
+        "edge": "My vase cost just over the limit?",
+    }
 )
 
 
@@ -68,12 +72,13 @@ def contract_for(document: Document, *items: dict[str, Any]) -> Contract:
     return Contract.model_validate({"source": document.source.model_dump(), "items": list(items)})
 
 
-async def test_writes_two_questions_per_approved_item(document: Document) -> None:
+async def test_writes_three_questions_per_approved_item(document: Document) -> None:
     llm = ScriptedLLM(GOOD)
 
     result = await generate(contract_for(document, fact()), document, llm)
 
-    direct, reworded = result.cases.tests
+    direct, reworded, edge = result.cases.tests
+    assert (edge.id, edge.style) == ("policy-1-edge", "edge")
     assert (direct.id, direct.style) == ("policy-1-direct", "direct")
     assert (reworded.id, reworded.style) == ("policy-1-reworded", "reworded")
     assert reworded.question == "My vase smashed. How much back?"
@@ -231,10 +236,17 @@ async def test_broken_evidence_on_an_unapproved_item_does_not_stop_the_run(
 @pytest.mark.parametrize(
     "leaky",
     [
-        pytest.param({"direct": "Is the cap £50?", "reworded": "How much back?"}, id="direct"),
-        pytest.param({"direct": "What is the cap?", "reworded": "So I get £50?"}, id="reworded"),
         pytest.param(
-            {"direct": "Limit?", "reworded": "Is it £50 PER item?"}, id="in-a-longer-phrase"
+            {"direct": "Is the cap £50?", "reworded": "How much back?", "edge": "And if over?"},
+            id="direct",
+        ),
+        pytest.param(
+            {"direct": "What is the cap?", "reworded": "So I get £50?", "edge": "And if over?"},
+            id="reworded",
+        ),
+        pytest.param(
+            {"direct": "Limit?", "reworded": "Is it £50 PER item?", "edge": "And if over?"},
+            id="in-a-longer-phrase",
         ),
     ],
 )
@@ -251,7 +263,13 @@ async def test_questions_holding_the_answer_are_retried_then_reported(
 
 async def test_the_answer_check_ignores_case() -> None:
     document = parse_document("policy.md", b"## S\nWe deliver across mainland UK every day.")
-    leaky = json.dumps({"direct": "Do you cover MAINLAND uk?", "reworded": "Where do you go?"})
+    leaky = json.dumps(
+        {
+            "direct": "Do you cover MAINLAND uk?",
+            "edge": "Do you go to islands?",
+            "reworded": "Where do you go?",
+        }
+    )
     item = fact(value="mainland UK", quote="across mainland UK", section="S")
 
     result = await generate(contract_for(document, item), document, ScriptedLLM(leaky, leaky))
@@ -260,7 +278,13 @@ async def test_the_answer_check_ignores_case() -> None:
 
 
 async def test_a_rule_has_no_answer_to_give_away(document: Document) -> None:
-    reply = json.dumps({"direct": "Can an agent approve it?", "reworded": "Can you OK it here?"})
+    reply = json.dumps(
+        {
+            "direct": "Can an agent approve it?",
+            "edge": "What if it is urgent?",
+            "reworded": "Can you OK it here?",
+        }
+    )
 
     result = await generate(contract_for(document, rule()), document, ScriptedLLM(reply))
 
@@ -270,8 +294,17 @@ async def test_a_rule_has_no_answer_to_give_away(document: Document) -> None:
 @pytest.mark.parametrize(
     "same",
     [
-        pytest.param({"direct": "How much?", "reworded": "How much?"}, id="identical"),
-        pytest.param({"direct": "How much?", "reworded": " HOW MUCH? "}, id="only-case-differs"),
+        pytest.param(
+            {"direct": "How much?", "reworded": "How much?", "edge": "And if over?"}, id="identical"
+        ),
+        pytest.param(
+            {"direct": "How much?", "reworded": " HOW MUCH? ", "edge": "And if over?"},
+            id="only-case-differs",
+        ),
+        pytest.param(
+            {"direct": "How much?", "reworded": "And if over?", "edge": "how much?"},
+            id="edge-repeats-direct",
+        ),
     ],
 )
 async def test_two_identical_questions_are_retried(
@@ -296,6 +329,7 @@ async def test_two_identical_questions_are_retried(
         pytest.param("{broken", id="broken-json"),
         pytest.param("[]", id="array"),
         pytest.param('{"direct": "only one"}', id="missing-question"),
+        pytest.param('{"direct": "x", "reworded": "y"}', id="missing-edge-question"),
         pytest.param('{"direct": 5, "reworded": "x"}', id="number"),
         pytest.param('{"direct": "  ", "reworded": "x"}', id="blank"),
         pytest.param('{"direct": "x", "reworded": null}', id="null"),
@@ -314,7 +348,7 @@ async def test_an_unusable_reply_is_retried_then_reported(
     result = await generate(contract_for(document, fact(), rule()), document, llm)
 
     assert result.failed_items == ("policy-1",)
-    assert [case.item for case in result.cases.tests] == ["policy-2", "policy-2"]
+    assert [case.item for case in result.cases.tests] == ["policy-2"] * 3
     assert len(llm.requests) == ATTEMPTS_PER_ITEM + 1
 
 
@@ -322,7 +356,7 @@ async def test_a_good_second_try_is_used(document: Document) -> None:
     result = await generate(contract_for(document, fact()), document, ScriptedLLM("no", GOOD))
 
     assert result.failed_items == ()
-    assert len(result.cases.tests) == 2
+    assert len(result.cases.tests) == 3
 
 
 async def test_code_fences_and_extra_fields_are_tolerated(document: Document) -> None:
@@ -349,8 +383,8 @@ async def test_pack_tests_are_added_after_the_item_tests(document: Document) -> 
 
     result = await generate(contract_for(document, fact()), document, ScriptedLLM(GOOD), packs)
 
-    assert [case.style for case in result.cases.tests[:2]] == ["direct", "reworded"]
-    assert result.cases.tests[2:] == list(packs)
+    assert [case.style for case in result.cases.tests[:3]] == ["direct", "reworded", "edge"]
+    assert result.cases.tests[3:] == list(packs)
 
 
 @pytest.mark.parametrize("name", ["compensation_policy", "delivery"])
@@ -361,7 +395,13 @@ async def test_the_example_contracts_still_match_the_demo_bots_policies(name: st
     document = parse_document(f"{name}.md", policy.read_bytes())
     approved = [item.model_copy(update={"approved": True}) for item in contract.items]
     replies = [
-        json.dumps({"direct": f"Question {n}?", "reworded": f"Customer question {n}?"})
+        json.dumps(
+            {
+                "direct": f"Question {n}?",
+                "reworded": f"Customer question {n}?",
+                "edge": f"Edge {n}?",
+            }
+        )
         for n in range(len(approved))
     ]
 
@@ -370,4 +410,39 @@ async def test_the_example_contracts_still_match_the_demo_bots_policies(name: st
     )
 
     assert result.failed_items == ()
-    assert len(result.cases.tests) == 2 * len(approved)
+    assert len(result.cases.tests) == 3 * len(approved)
+
+
+async def test_an_edge_question_holding_the_answer_is_retried(document: Document) -> None:
+    leaky = json.dumps({"direct": "Limit?", "reworded": "How much?", "edge": "Is £50 the most?"})
+
+    result = await generate(contract_for(document, fact()), document, ScriptedLLM(leaky, GOOD))
+
+    assert result.failed_items == ()
+    assert result.cases.tests[2].question == "My vase cost just over the limit?"
+
+
+async def test_the_prompt_asks_for_an_edge_case(document: Document) -> None:
+    llm = ScriptedLLM(GOOD)
+
+    await generate(contract_for(document, fact()), document, llm)
+
+    assert "just over or under a limit" in llm.requests[0][0]
+
+
+async def test_questions_with_currency_symbols_go_to_the_model_as_they_are(
+    document: Document,
+) -> None:
+    llm = ScriptedLLM(GOOD)
+
+    await generate(contract_for(document, fact()), document, llm)
+
+    assert "£50" in llm.requests[0][1]
+
+
+async def test_a_reply_exactly_at_the_size_limit_is_read(document: Document) -> None:
+    llm = ScriptedLLM(GOOD.ljust(MAX_REPLY_CHARS))
+
+    result = await generate(contract_for(document, fact()), document, llm)
+
+    assert result.failed_items == ()

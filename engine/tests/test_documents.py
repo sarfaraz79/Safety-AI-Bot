@@ -376,3 +376,7 @@ def test_sections_can_be_looked_up_by_heading() -> None:
 
 def test_a_lookup_table_does_not_affect_whether_documents_are_equal() -> None:
     assert parse_document("p.md", b"## A\ntext") == parse_document("p.md", b"## A\ntext")
+
+
+def test_a_comment_cant_close_itself_with_its_own_opening() -> None:
+    assert sections("## Title\nSeen <!--> hidden --> also seen") == [("Title", "Seen  also seen")]

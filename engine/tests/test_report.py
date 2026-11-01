@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from audit_engine.contract import Source
+from audit_engine.contract import Contract, Source
 from audit_engine.report import build_report, render_html, render_json
 from audit_engine.results import JudgedAnswer
 from audit_engine.testcases import Case
@@ -385,3 +385,205 @@ def test_a_long_report_renders() -> None:
     ]
 
     assert "Failed tests (200)" in html(*results)
+
+
+# The numbers.
+
+
+def test_percentages_are_worked_out_from_the_results() -> None:
+    built = report(
+        answer(FACT, attempt=1),
+        answer(FACT, attempt=2, verdict="fail"),
+        answer(RULE),
+        answer(PACK, verdict="unclear"),
+        answer(
+            PACK.model_copy(update={"id": "gap"}), verdict="error", reply=None, decided_by="none"
+        ),
+    )
+
+    metrics = built.metrics
+    assert metrics.test_pass_percent == 25.0
+    assert metrics.answer_pass_percent == 40.0
+    assert metrics.needs_person_percent == 20.0
+    assert metrics.not_judged_percent == 20.0
+
+
+def test_code_decisions_are_counted() -> None:
+    assert report(answer(decided_by="automatic"), answer()).metrics.decided_by_code_percent == 50.0
+
+
+def test_a_test_with_mixed_results_is_inconsistent() -> None:
+    metrics = report(
+        answer(FACT, attempt=1),
+        answer(FACT, attempt=2, verdict="fail"),
+        answer(RULE, attempt=1),
+        answer(RULE, attempt=2),
+        answer(PACK),
+    ).metrics
+
+    assert metrics.repeated_tests == 2
+    assert metrics.inconsistent_tests == 1
+    assert metrics.inconsistent_percent == 50.0
+
+
+def test_consistency_needs_a_repeat() -> None:
+    metrics = report(answer()).metrics
+
+    assert metrics.repeated_tests == 0
+    assert metrics.inconsistent_percent is None
+    assert "Asked more than once" not in html(answer())
+
+
+def test_failed_tests_are_counted_by_severity() -> None:
+    metrics = report(
+        answer(FACT, verdict="fail"),
+        answer(RULE, verdict="fail"),
+        answer(PACK, verdict="fail", captured={"tool_calls": ["issue_refund"]}),
+    ).metrics
+
+    assert metrics.severities == {"high": 1, "medium": 1, "critical": 1}
+
+
+def test_each_risk_area_gets_its_own_line() -> None:
+    gap = PACK.model_copy(update={"id": "gap"})
+    other = PACK.model_copy(update={"id": "other"})
+    unclear = PACK.model_copy(update={"id": "unclear"})
+
+    areas = report(
+        answer(FACT),
+        answer(RULE, verdict="fail"),
+        answer(PACK),
+        answer(other, verdict="fail"),
+        answer(unclear, verdict="unclear"),
+        answer(gap, verdict="error", reply=None, decided_by="none"),
+    ).metrics.areas
+
+    by_name = {area.area: area for area in areas}
+    assert set(by_name) == {"escalation", "policy (direct)", "policy (reworded)"}
+    pack = by_name["escalation"]
+    assert (pack.tests, pack.passed, pack.failed, pack.unclear, pack.not_judged) == (4, 1, 1, 1, 1)
+    assert pack.pass_percent == 25.0
+
+
+def contract(*approved: bool) -> Contract:
+    return Contract.model_validate(
+        {
+            "source": SOURCE.model_dump(),
+            "items": [
+                {
+                    "id": f"policy-{number}",
+                    "kind": "rule",
+                    "statement": "A rule.",
+                    "section": "A section",
+                    "quote": "A quote here.",
+                    "approved": is_approved,
+                }
+                for number, is_approved in enumerate(approved, start=1)
+            ],
+        }
+    )
+
+
+def test_coverage_counts_approved_items_that_got_a_judged_answer() -> None:
+    built = build_report(
+        [answer(FACT), answer(RULE, verdict="error", reply=None, decided_by="none")],
+        cut_short=False,
+        generated_at=WHEN,
+        contract=contract(True, True, False),
+    )
+
+    coverage = built.metrics.coverage
+    assert coverage is not None
+    assert (coverage.approved_items, coverage.tested_items) == (2, 1)
+    assert coverage.percent == 50.0
+    assert coverage.untested == ["policy-2"]
+    assert coverage.unapproved_items == 1
+
+
+def test_an_unapproved_item_isnt_counted_as_covered() -> None:
+    built = build_report(
+        [answer(FACT)], cut_short=False, generated_at=WHEN, contract=contract(False)
+    )
+
+    coverage = built.metrics.coverage
+    assert coverage is not None
+    assert (coverage.approved_items, coverage.tested_items, coverage.percent) == (0, 0, None)
+
+
+def test_the_page_shows_the_numbers_and_coverage() -> None:
+    built = build_report(
+        [answer(FACT), answer(FACT, attempt=2)],
+        cut_short=False,
+        generated_at=WHEN,
+        contract=contract(True, True, False),
+    )
+
+    page = render_html(built)
+
+    assert "Tests fully passed" in page
+    assert "100.0% (1 of 1)" in page
+    assert "Approved policy items tested" in page
+    assert "50.0% (1 of 2)" in page
+    assert "1 more weren't approved" in page
+    assert "policy-2" in page
+    assert "By risk area" in page
+    assert "no percentage here means the bot is that safe" in page
+
+
+def test_the_page_says_coverage_needs_a_contract() -> None:
+    assert "Give the contract with --contract" in html(answer())
+
+
+def test_full_coverage_lists_nothing_as_untested() -> None:
+    built = build_report(
+        [answer(FACT)], cut_short=False, generated_at=WHEN, contract=contract(True)
+    )
+
+    assert "Approved items not tested" not in render_html(built)
+
+
+def test_the_page_shows_and_escapes_an_earlier_conversation() -> None:
+    earlier = [{"customer": "<b>Hi</b>", "bot": "<script>bad</script>"}]
+
+    page = html(answer(verdict="fail", earlier=earlier))
+
+    assert "Earlier in the chat" in page
+    assert "&lt;script&gt;bad" in page
+    assert "<script>bad" not in page
+
+
+def test_percentages_are_rounded_to_one_decimal_place() -> None:
+    built = report(answer(FACT), answer(RULE, verdict="fail"), answer(PACK, verdict="fail"))
+
+    assert built.metrics.test_pass_percent == 33.3
+
+
+def test_every_kind_of_missing_answer_counts_as_not_judged() -> None:
+    built = report(
+        answer(FACT, verdict="error", reply=None, decided_by="none"),
+        answer(RULE, verdict="not_run", reply=None, attempt=None, decided_by="none"),
+        answer(PACK, verdict="not_run", reply=None, attempt=None, decided_by="none"),
+    )
+
+    assert built.metrics.not_judged_percent == 100.0
+
+
+def test_only_answers_decided_by_code_count_as_decided_by_code() -> None:
+    built = report(
+        answer(FACT, decided_by="automatic"),
+        answer(RULE),
+        answer(PACK),
+    )
+
+    assert built.metrics.decided_by_code_percent == 33.3
+
+
+def test_coverage_counts_only_the_items_that_were_judged() -> None:
+    built = build_report(
+        [answer(FACT)], cut_short=False, generated_at=WHEN, contract=contract(True, True, True)
+    )
+
+    coverage = built.metrics.coverage
+    assert coverage is not None
+    assert coverage.tested_items == 1
+    assert coverage.untested == ["policy-2", "policy-3"]
