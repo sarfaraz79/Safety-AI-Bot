@@ -49,12 +49,7 @@ async def run_cases(
     record: Callable[[TranscriptEntry], None],
     limits: RunLimits,
 ) -> RunSummary:
-    """Ask every question `limits.repeats` times.
-
-    Each is asked once before any is asked twice, so a run that stops early covers them evenly.
-
-    If `record` fails, the run stops: answers that can't be saved aren't worth paying for.
-    """
+    """Ask every question once, then again up to `limits.repeats`. Stop if `record` fails."""
     jobs = ((case, attempt) for attempt in range(1, limits.repeats + 1) for case in cases)
     pacer = _Pacer(limits.requests_per_second)
     answered = 0
@@ -65,18 +60,7 @@ async def run_cases(
         for case, attempt in jobs:
             await pacer.wait()
             answer = await ask(case.question)
-            record(
-                TranscriptEntry(
-                    case_id=case.id,
-                    attempt=attempt,
-                    question=case.question,
-                    reply=answer.reply,
-                    captured=answer.captured,
-                    status=answer.status,
-                    error=answer.error,
-                    at=datetime.now(UTC),
-                )
-            )
+            record(_as_entry(case, attempt, answer))
             if answer.error is None:
                 answered += 1
             else:
@@ -89,3 +73,16 @@ async def run_cases(
     except ExceptionGroup as problems:
         raise problems.exceptions[0] from None
     return RunSummary(answered=answered, failed=failed)
+
+
+def _as_entry(case: Case, attempt: int, answer: Answer) -> TranscriptEntry:
+    return TranscriptEntry(
+        case_id=case.id,
+        attempt=attempt,
+        question=case.question,
+        reply=answer.reply,
+        captured=answer.captured,
+        status=answer.status,
+        error=answer.error,
+        at=datetime.now(UTC),
+    )

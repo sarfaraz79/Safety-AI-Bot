@@ -54,11 +54,7 @@ def judge_command(
     common.check_outputs([output], inputs, force=force)
     cases = read_tests(tests_path)
     entries, cut_short = _read_transcript(transcript)
-    context = JudgeContext(
-        policies=tuple(read_policy(path) for path in policies),
-        actions=read_target(target_path).actions if target_path else {},
-        concurrency=concurrency,
-    )
+    context = _read_context(policies, target_path, concurrency)
     try:
         check_policies(cases, context)
         check_transcript(cases, entries)
@@ -76,6 +72,14 @@ def judge_command(
     except OSError as exc:
         common.fail(f"Could not write {output}: {exc.strerror}.")
     _report(summary, output, cut_short=cut_short)
+
+
+def _read_context(policies: list[Path], target_path: Path | None, concurrency: int) -> JudgeContext:
+    return JudgeContext(
+        policies=tuple(read_policy(path) for path in policies),
+        actions=read_target(target_path).actions if target_path else {},
+        concurrency=concurrency,
+    )
 
 
 def _read_transcript(path: Path) -> tuple[list[TranscriptEntry], bool]:

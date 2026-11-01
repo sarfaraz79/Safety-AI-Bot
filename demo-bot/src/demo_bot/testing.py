@@ -6,10 +6,7 @@ from demo_bot.llm import LLMResponse, Message, ToolCall, ToolSpec
 
 
 class ScriptedLLM:
-    """Plays back the given responses in order, and records every request it receives.
-
-    An exception in the script is raised instead of returned, to simulate a provider failure.
-    """
+    """Plays back the given responses in order, raising any that are exceptions."""
 
     def __init__(self, *script: LLMResponse | Exception) -> None:
         self._script = list(script)

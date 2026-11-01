@@ -6,6 +6,7 @@ import secrets
 import time
 from collections.abc import Awaitable, Callable
 from typing import Annotated
+from urllib.parse import urlsplit
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -43,11 +44,7 @@ def is_loopback(host: str | None) -> bool:
 
 
 def require_client_access(token: SecretStr | None) -> AccessCheck:
-    """Build the access check for protected routes.
-
-    With a token configured, every request must send `Authorization: Bearer <token>`.
-    Without one, only clients on this machine are allowed, and not web pages they have open.
-    """
+    """Build the route check: a bearer token if configured, otherwise local clients only."""
     expected = token.get_secret_value().encode() if token is not None else None
 
     async def check(
@@ -70,34 +67,40 @@ def require_client_access(token: SecretStr | None) -> AccessCheck:
 
 
 def _is_local_request(request: Request) -> bool:
-    """Check the caller, and that no website is using the caller's browser to reach this server.
-
-    A browser on this machine connects from loopback, so its Host and Origin headers must be
-    checked too: Host stops DNS rebinding, and Origin stops cross-site form-style requests.
-    """
+    """Check the caller, and that no website is using a local browser to reach this server."""
     client_host = request.client.host if request.client else None
     host_header = request.headers.get("host", "")
     origin = request.headers.get("origin")
+    # A local browser connects from loopback, so the headers matter too: Host stops DNS
+    # rebinding, and Origin stops cross-site requests.
     return (
         is_loopback(client_host)
-        and is_loopback(_hostname(host_header))
-        and (origin is None or is_loopback(_hostname(origin.partition("://")[2])))
+        and is_loopback(_hostname(f"//{host_header}"))
+        and (origin is None or is_loopback(_hostname(origin)))
     )
 
 
-def _hostname(address: str) -> str:
-    """Remove the port from `host:port` or `[ipv6]:port`."""
-    if address.startswith("["):
-        return address[1:].partition("]")[0]
-    return address.partition(":")[0]
+def _hostname(url: str) -> str | None:
+    """Return the host of `scheme://host:port` or `//host:port`, or None for anything else."""
+    try:
+        parts = urlsplit(url)
+        _ = parts.port  # raises ValueError if the port is invalid
+    except ValueError:
+        return None
+    # geturl() differs if urlsplit dropped anything, such as a tab or an empty "?".
+    if (
+        parts.geturl().lower() != url.lower()
+        or parts.path
+        or parts.query
+        or parts.fragment
+        or "@" in parts.netloc
+    ):
+        return None
+    return parts.hostname
 
 
 class RateLimiter:
-    """A token bucket: allows short bursts, and holds the long-run rate at `per_minute`.
-
-    Each check takes constant time and memory. The count is per process, so running several
-    processes multiplies the limit. The real ceiling on spending is the model provider's limit.
-    """
+    """Token bucket allowing short bursts at a long-run rate of `per_minute`, per process."""
 
     def __init__(self, per_minute: int, clock: Callable[[], float] = time.monotonic) -> None:
         self._capacity = float(per_minute)
@@ -118,7 +121,7 @@ class RateLimiter:
 
 
 class SecurityHeadersMiddleware:
-    """Tell browsers not to guess content types, frame these pages, or cache chat replies."""
+    """Add headers that stop browsers sniffing, framing or caching responses."""
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -137,11 +140,7 @@ class SecurityHeadersMiddleware:
 
 
 class BodySizeLimitMiddleware:
-    """Reject request bodies larger than `max_bytes` with 413, before the app parses them.
-
-    The body is read here, up to the limit, and then handed to the app unchanged. This
-    also covers chunked uploads, which have no Content-Length header to check up front.
-    """
+    """Read the body up to `max_bytes`, including chunked uploads, before the app sees it."""
 
     def __init__(self, app: ASGIApp, max_bytes: int, read_timeout_seconds: float = 10.0) -> None:
         self.app = app
@@ -155,50 +154,65 @@ class BodySizeLimitMiddleware:
 
         # The server's own limit only covers headers that arrive in pieces, so check them here too.
         if sum(len(name) + len(value) for name, value in scope["headers"]) > MAX_HEADER_BYTES:
-            too_large = JSONResponse(
-                {"detail": "Request headers too large."},
-                status_code=status.HTTP_431_REQUEST_HEADER_FIELDS_TOO_LARGE,
+            refusal = _refusal(
+                "Request headers too large.", status.HTTP_431_REQUEST_HEADER_FIELDS_TOO_LARGE
             )
-            await too_large(scope, receive, send)
+            await refusal(scope, receive, send)
             return
 
-        chunks: list[bytes] = []
-        size = 0
-        more_body = True
         try:
             # A time limit, so a client sending a byte at a time can't hold a connection open.
             async with asyncio.timeout(self.read_timeout_seconds):
-                while more_body:
-                    message = await receive()
-                    if message["type"] != "http.request":  # the client disconnected
-                        return
-                    chunk: bytes = message.get("body", b"")
-                    size += len(chunk)
-                    if size > self.max_bytes:
-                        too_large = JSONResponse(
-                            {"detail": "Request body too large."},
-                            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-                        )
-                        await too_large(scope, receive, send)
-                        return
-                    chunks.append(chunk)
-                    more_body = message.get("more_body", False)
+                body = await self._read_body(receive)
+        except _BodyTooLargeError:
+            refusal = _refusal("Request body too large.", status.HTTP_413_CONTENT_TOO_LARGE)
+            await refusal(scope, receive, send)
+            return
         except TimeoutError:
-            too_slow = JSONResponse(
-                {"detail": "Request body took too long to arrive."},
-                status_code=status.HTTP_408_REQUEST_TIMEOUT,
+            refusal = _refusal(
+                "Request body took too long to arrive.", status.HTTP_408_REQUEST_TIMEOUT
             )
-            await too_slow(scope, receive, send)
+            await refusal(scope, receive, send)
             return
 
-        body = b"".join(chunks)
-        body_delivered = False
+        if body is not None:
+            await self.app(scope, _replay(body, receive), send)
 
-        async def replay_body() -> Message:
-            nonlocal body_delivered
-            if body_delivered:
-                return await receive()
-            body_delivered = True
-            return {"type": "http.request", "body": body, "more_body": False}
+    async def _read_body(self, receive: Receive) -> bytes | None:
+        """Return the whole body, or None if the client disconnected."""
+        chunks: list[bytes] = []
+        size = 0
+        more_body = True
+        while more_body:
+            message = await receive()
+            if message["type"] != "http.request":
+                return None
+            chunk: bytes = message.get("body", b"")
+            size += len(chunk)
+            if size > self.max_bytes:
+                raise _BodyTooLargeError
+            chunks.append(chunk)
+            more_body = message.get("more_body", False)
+        return b"".join(chunks)
 
-        await self.app(scope, replay_body, send)
+
+class _BodyTooLargeError(Exception):
+    pass
+
+
+def _refusal(detail: str, status_code: int) -> JSONResponse:
+    return JSONResponse({"detail": detail}, status_code=status_code)
+
+
+def _replay(body: bytes, receive: Receive) -> Receive:
+    """Hand the app a body that was already read, then pass later messages through."""
+    delivered = False
+
+    async def replay_body() -> Message:
+        nonlocal delivered
+        if delivered:
+            return await receive()
+        delivered = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    return replay_body

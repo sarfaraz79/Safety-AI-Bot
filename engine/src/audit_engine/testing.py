@@ -4,10 +4,7 @@ from audit_engine.llm import LLMError
 
 
 class ScriptedLLM:
-    """Plays back the given replies in order, and records every question it receives.
-
-    An LLMError in the script is raised instead of returned, to simulate a provider failure.
-    """
+    """Plays back the given replies in order, raising any that are an LLMError."""
 
     def __init__(self, *script: str | LLMError) -> None:
         self._script = list(script)

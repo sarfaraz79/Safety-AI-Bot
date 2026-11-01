@@ -30,7 +30,7 @@ def load_settings() -> Settings:
 
 
 def _describe_settings_errors(exc: ValidationError) -> str:
-    """List each problem by environment variable name, never echoing values: they may be secret."""
+    """List each invalid environment variable by name, never its value."""
     lines = []
     for error in exc.errors(include_url=False, include_input=False):
         name = str(error["loc"][0]).upper()
@@ -48,9 +48,7 @@ def make_client(settings: Settings, model: str | None = None) -> LLMClient:
 
 
 def check_outputs(outputs: Iterable[Path], inputs: Iterable[Path], *, force: bool) -> None:
-    """Runs first, so a mistake here costs nothing. Results are evidence, so they're never
-    replaced by accident, and an input can never be replaced at all.
-    """
+    """Refuse to replace an input, or an existing output without `force`."""
     protected = {path.resolve() for path in inputs}
     for output in outputs:
         if output.resolve() in protected:
@@ -62,7 +60,7 @@ def check_outputs(outputs: Iterable[Path], inputs: Iterable[Path], *, force: boo
 
 
 def read_bytes(path: Path, *, limit: int) -> bytes:
-    """Read at most `limit` + 1 bytes, which is enough for the caller to see it's too large."""
+    """Read at most `limit` + 1 bytes, so the caller can tell the file is too large."""
     try:
         with path.open("rb") as file:
             return file.read(limit + 1)

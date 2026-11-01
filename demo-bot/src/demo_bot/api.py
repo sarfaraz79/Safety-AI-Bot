@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -27,19 +27,12 @@ MAX_BODY_BYTES = 128 * 1024
 
 logger = logging.getLogger(__name__)
 
+_RETRY_SOON = {"Retry-After": "5"}
+
 
 def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
     """Build the app. Tests pass `llm` to replace the real model client."""
-    model: LLMClient = (
-        llm
-        if llm is not None
-        else OpenAICompatibleClient(
-            model=settings.llm_model,
-            api_key=settings.llm_api_key.get_secret_value(),
-            base_url=str(settings.llm_base_url),
-            timeout_seconds=settings.llm_timeout_seconds,
-        )
-    )
+    model = llm if llm is not None else _make_client(settings)
     agent = SupportAgent(
         llm=model,
         index=BM25Index(load_knowledge_base()),
@@ -64,8 +57,6 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
     )
     app.add_middleware(BodySizeLimitMiddleware, max_bytes=MAX_BODY_BYTES)
     app.add_middleware(SecurityHeadersMiddleware)
-    rate_limiter = RateLimiter(settings.chats_per_minute)
-    chats_running = asyncio.Semaphore(settings.max_concurrent_chats)
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(_: Request, exc: RequestValidationError) -> JSONResponse:
@@ -77,7 +68,30 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.post("/chat", dependencies=[Depends(require_client_access(settings.auth_token))])
+    app.add_api_route(
+        "/chat",
+        _make_chat_route(settings, agent),
+        methods=["POST"],
+        dependencies=[Depends(require_client_access(settings.auth_token))],
+    )
+    return app
+
+
+def _make_client(settings: Settings) -> OpenAICompatibleClient:
+    return OpenAICompatibleClient(
+        model=settings.llm_model,
+        api_key=settings.llm_api_key.get_secret_value(),
+        base_url=str(settings.llm_base_url),
+        timeout_seconds=settings.llm_timeout_seconds,
+    )
+
+
+def _make_chat_route(
+    settings: Settings, agent: SupportAgent
+) -> Callable[[ChatRequest], Awaitable[ChatResponse]]:
+    rate_limiter = RateLimiter(settings.chats_per_minute)
+    chats_running = asyncio.Semaphore(settings.max_concurrent_chats)
+
     async def chat(body: ChatRequest) -> ChatResponse:
         conversation = [
             UserMessage(m.content) if m.role == "user" else AssistantMessage(m.content)
@@ -88,13 +102,13 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
             raise HTTPException(
                 status.HTTP_429_TOO_MANY_REQUESTS,
                 "Too many requests. Try again shortly.",
-                headers={"Retry-After": "5"},
+                headers=_RETRY_SOON,
             )
         if chats_running.locked():
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "The bot is busy. Try again shortly.",
-                headers={"Retry-After": "5"},
+                headers=_RETRY_SOON,
             )
         try:
             async with chats_running, asyncio.timeout(settings.chat_timeout_seconds):
@@ -114,11 +128,11 @@ def create_app(settings: Settings, llm: LLMClient | None = None) -> FastAPI:
         )
         return _to_response(reply, settings.prompt_version)
 
-    return app
+    return chat
 
 
 def _describe_problems(exc: RequestValidationError) -> list[dict[str, object]]:
-    """List what's wrong, without FastAPI's echo of the input: it may hold unencodable text."""
+    """List validation errors without echoing the input, which may be unencodable."""
     return [
         {
             "type": error["type"],

@@ -8,11 +8,7 @@ from audit_engine.yaml_files import YamlFileError
 def parse_jsonl[ModelT: BaseModel](
     text: str, model: type[ModelT], *, name: str, max_chars: int, error: type[YamlFileError]
 ) -> tuple[list[ModelT], bool]:
-    """Return the entries, and whether a crash cut the file short.
-
-    Only a last line with no line break can be a cut-off write. Anything else that's wrong
-    means the file has been damaged or edited, so it's refused.
-    """
+    """Return the entries, and whether a crash cut off the last line. Refuse other damage."""
     if len(text) > max_chars:
         raise error(f"The {name} is longer than {max_chars} characters.")
     lines = text.split("\n")

@@ -45,7 +45,7 @@ none, reply {"items": []}.
 
 
 class _Proposal(BaseModel):
-    """One item as suggested by the model. Anything else it sends, like `approved`, is ignored."""
+    """One item suggested by the model. Other fields, like `approved`, are ignored."""
 
     kind: str
     statement: str
@@ -59,7 +59,7 @@ class _Reply(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class Rejection:
-    """A suggestion that failed its checks, kept so a person can see what was left out and why."""
+    """A suggestion that failed its checks, and why."""
 
     section: str
     kind: str
