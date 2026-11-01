@@ -116,3 +116,14 @@ def test_errors_never_quote_the_file() -> None:
 def test_an_oversized_file_is_refused() -> None:
     with pytest.raises(TranscriptError, match="longer than"):
         parse_transcript("x" * (MAX_TRANSCRIPT_CHARS + 1))
+
+
+def test_a_transcript_from_before_conversations_still_loads() -> None:
+    old = (
+        '{"case_id": "a", "attempt": 1, "question": "Q?", "reply": "R", "captured": {}, '
+        '"status": 200, "error": null, "at": "2026-10-30T00:00:00Z"}\n'
+    )
+
+    entries, _ = parse_transcript(old)
+
+    assert entries[0].earlier == []

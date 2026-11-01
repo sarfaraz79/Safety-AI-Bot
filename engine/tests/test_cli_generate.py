@@ -17,7 +17,13 @@ from audit_engine.testing import ScriptedLLM
 POLICY = """## Lost or damaged items
 Compensation for items lost or damaged in transit is capped at £50 per item.
 """
-GOOD = json.dumps({"direct": "What is the cap?", "reworded": "My vase broke, how much back?"})
+GOOD = json.dumps(
+    {
+        "direct": "What is the cap?",
+        "reworded": "My vase broke, how much back?",
+        "edge": "My vase cost a bit over the limit?",
+    }
+)
 VALUES = (
     "--value",
     "company=Example Parcels",
@@ -94,18 +100,33 @@ def test_writes_item_and_pack_tests(
 
     assert result.exit_code == 0
     cases = parse_cases(output.read_text("utf-8"))
-    assert [case.id for case in cases.tests[:2]] == ["policy-1-direct", "policy-1-reworded"]
-    assert {case.pack for case in cases.tests[2:]} == {
+    assert [case.id for case in cases.tests[:3]] == [
+        "policy-1-direct",
+        "policy-1-reworded",
+        "policy-1-edge",
+    ]
+    assert {case.pack for case in cases.tests[3:]} == {
         "boundaries",
+        "brand_safety",
+        "commitments",
         "confidential",
+        "consumer_rights",
         "escalation",
+        "excessive_agency",
         "hidden_instructions",
+        "made_up_facts",
+        "multi_turn",
+        "obfuscation",
+        "output_safety",
+        "personal_data",
         "pressure",
+        "transparency",
+        "vulnerable_customers",
     }
     assert "Are you cheaper than Acme?" in {case.question for case in cases.tests}
     assert llm.closed
     assert "Approved items to write questions for: 1" in result.output
-    assert f"Tests written to {output}: 33." in result.output
+    assert f"Tests written to {output}: 101." in result.output
 
 
 @pytest.mark.usefixtures("configured")
@@ -119,7 +140,7 @@ def test_no_packs_leaves_them_out(
         "generate", write_contract(tmp_path, policy), "--policy", policy, "-o", output, "--no-packs"
     )
 
-    assert len(parse_cases(output.read_text("utf-8")).tests) == 2
+    assert len(parse_cases(output.read_text("utf-8")).tests) == 3
 
 
 @pytest.mark.usefixtures("configured")
@@ -242,7 +263,7 @@ def test_force_replaces_it(policy: Path, tmp_path: Path, monkeypatch: pytest.Mon
     )
 
     assert result.exit_code == 0
-    assert len(parse_cases(output.read_text("utf-8")).tests) == 2
+    assert len(parse_cases(output.read_text("utf-8")).tests) == 3
 
 
 @pytest.mark.usefixtures("configured")

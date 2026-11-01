@@ -2,11 +2,12 @@
 
 from typing import Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from audit_engine.contract import Source
 from audit_engine.jsonl_files import parse_jsonl
 from audit_engine.testcases import Case
+from audit_engine.transcripts import Turn
 from audit_engine.yaml_files import YamlFileError
 
 MAX_RESULTS_CHARS = 300_000_000
@@ -33,12 +34,18 @@ class JudgedAnswer(BaseModel):
     reason: str
     offending_quote: str | None
     action_unchecked: bool = False
+    earlier: list[Turn] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _check_failures_show_their_evidence(self) -> Self:
         if self.verdict == "fail" and not self.offending_quote:
             raise ValueError("A failure must quote what the bot got wrong.")
         return self
+
+
+def area_of(answer: JudgedAnswer) -> str:
+    """Name what a test checks: its standard pack, or the style of its policy question."""
+    return answer.case.pack or f"policy ({answer.case.style})"
 
 
 def render_result(result: JudgedAnswer) -> str:

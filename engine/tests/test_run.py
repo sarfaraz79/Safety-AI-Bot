@@ -1,13 +1,14 @@
 import asyncio
 import time
 from collections import Counter
+from collections.abc import Sequence
 
 import pytest
 
 from audit_engine.run import RunLimits, run_cases
 from audit_engine.target import Answer
 from audit_engine.testcases import Case
-from audit_engine.transcripts import TranscriptEntry
+from audit_engine.transcripts import TranscriptEntry, Turn
 
 pytestmark = pytest.mark.anyio
 
@@ -22,7 +23,7 @@ def case(number: int) -> Case:
     )
 
 
-async def echo(question: str) -> Answer:
+async def echo(question: str, _earlier: Sequence[str] = ()) -> Answer:
     return Answer(reply=f"Answer to {question}", captured={"tools": []}, status=200, error=None)
 
 
@@ -76,7 +77,7 @@ async def test_no_cases_means_no_requests() -> None:
 
 
 async def test_failures_are_recorded_and_counted_and_the_run_carries_on() -> None:
-    async def flaky(question: str) -> Answer:
+    async def flaky(question: str, _earlier: Sequence[str] = ()) -> Answer:
         if "1" in question:
             return Answer(reply=None, captured={}, status=500, error="The bot returned HTTP 500.")
         return await echo(question)
@@ -97,7 +98,7 @@ async def test_never_runs_more_requests_at_once_than_allowed() -> None:
     running = 0
     busiest = 0
 
-    async def slow(question: str) -> Answer:
+    async def slow(question: str, _earlier: Sequence[str] = ()) -> Answer:
         nonlocal running, busiest
         running += 1
         busiest = max(busiest, running)
@@ -128,7 +129,7 @@ async def test_keeps_to_the_rate_limit_however_many_run_at_once() -> None:
 
 
 async def test_concurrent_runs_keep_each_answer_with_its_question() -> None:
-    async def varied(question: str) -> Answer:
+    async def varied(question: str, _earlier: Sequence[str] = ()) -> Answer:
         await asyncio.sleep(0.01 if "1" in question else 0)
         return await echo(question)
 
@@ -147,7 +148,7 @@ async def test_concurrent_runs_keep_each_answer_with_its_question() -> None:
 async def test_answers_are_recorded_as_they_arrive_so_a_stop_keeps_them() -> None:
     entries: list[TranscriptEntry] = []
 
-    async def stops_on_the_third(question: str) -> Answer:
+    async def stops_on_the_third(question: str, _earlier: Sequence[str] = ()) -> Answer:
         if "3" in question:
             raise RuntimeError("Stopped")
         return await echo(question)
@@ -166,7 +167,7 @@ async def test_answers_are_recorded_as_they_arrive_so_a_stop_keeps_them() -> Non
 async def test_a_full_disk_stops_the_run_and_raises_the_real_error() -> None:
     calls = 0
 
-    async def counted(question: str) -> Answer:
+    async def counted(question: str, _earlier: Sequence[str] = ()) -> Answer:
         nonlocal calls
         calls += 1
         return await echo(question)
@@ -183,3 +184,25 @@ async def test_a_full_disk_stops_the_run_and_raises_the_real_error() -> None:
         )
 
     assert calls < 50
+
+
+async def test_earlier_messages_reach_the_bot_and_the_transcript() -> None:
+    seen: list[tuple[str, Sequence[str]]] = []
+
+    async def converse(question: str, earlier: Sequence[str]) -> Answer:
+        seen.append((question, earlier))
+        return Answer(
+            reply="Last",
+            captured={},
+            status=200,
+            error=None,
+            earlier=(Turn(customer="First?", bot="One"),),
+        )
+
+    test = case(1).model_copy(update={"earlier": ["First?"]})
+    entries: list[TranscriptEntry] = []
+
+    await run_cases([test], converse, entries.append, RunLimits(1, 1, 100.0))
+
+    assert seen == [("Question 1?", ["First?"])]
+    assert entries[0].earlier == [Turn(customer="First?", bot="One")]

@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from audit_engine.target import (
     MAX_RESPONSE_BYTES,
+    NO_CONVERSATION,
     Target,
     TargetClient,
     TargetError,
@@ -467,3 +468,145 @@ async def test_close_releases_the_http_client() -> None:
     await TargetClient(target(), None, http_client).aclose()
 
     assert http_client.is_closed
+
+
+# Conversations.
+
+
+def conversation_target() -> dict[str, Any]:
+    return {"request": {"messages": "{{conversation}}"}}
+
+
+def script(*replies: dict[str, Any]) -> tuple[Provider, list[Any]]:
+    sent: list[Any] = []
+    waiting = iter(replies)
+
+    def provider(request: httpx2.Request) -> httpx2.Response:
+        sent.append(json.loads(request.content)["messages"])
+        return httpx2.Response(200, json=next(waiting))
+
+    return provider, sent
+
+
+@pytest.mark.anyio
+async def test_a_single_question_can_use_the_conversation_placeholder() -> None:
+    provider, sent = script({"reply": "Hi"})
+
+    answer = await client(provider, **conversation_target()).ask("Hello?")
+
+    assert answer.reply == "Hi"
+    assert answer.earlier == ()
+    assert sent == [[{"role": "user", "content": "Hello?"}]]
+
+
+@pytest.mark.anyio
+async def test_each_turn_sends_the_whole_conversation_so_far() -> None:
+    provider, sent = script({"reply": "One"}, {"reply": "Two"}, {"reply": "Three"})
+
+    answer = await client(provider, **conversation_target()).ask("Third?", ["First?", "Second?"])
+
+    assert answer.reply == "Three"
+    assert [(turn.customer, turn.bot) for turn in answer.earlier] == [
+        ("First?", "One"),
+        ("Second?", "Two"),
+    ]
+    assert sent[2] == [
+        {"role": "user", "content": "First?"},
+        {"role": "assistant", "content": "One"},
+        {"role": "user", "content": "Second?"},
+        {"role": "assistant", "content": "Two"},
+        {"role": "user", "content": "Third?"},
+    ]
+
+
+@pytest.mark.anyio
+async def test_a_tool_used_in_an_early_turn_is_never_lost() -> None:
+    provider, _ = script(
+        {"reply": "Done", "tool_calls": ["issue_refund"], "note": "first"},
+        {"reply": "All fine", "tool_calls": [], "note": None},
+    )
+
+    answer = await client(
+        provider,
+        capture={"tool_calls": "tool_calls", "note": "note", "gone": "missing"},
+        **conversation_target(),
+    ).ask("Next?", ["Refund me"])
+
+    assert answer.captured == {"tool_calls": ["issue_refund"], "note": "first", "gone": None}
+
+
+@pytest.mark.anyio
+async def test_a_later_value_replaces_an_earlier_one_that_isnt_a_list() -> None:
+    provider, _ = script({"reply": "A", "note": "first"}, {"reply": "B", "note": "second"})
+
+    answer = await client(provider, capture={"note": "note"}, **conversation_target()).ask(
+        "Next?", ["Hi"]
+    )
+
+    assert answer.captured == {"note": "second"}
+
+
+@pytest.mark.anyio
+async def test_a_failure_part_way_stops_the_conversation_and_keeps_what_was_said() -> None:
+    calls = 0
+
+    def provider(_: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            return httpx2.Response(500)
+        return httpx2.Response(200, json={"reply": "One"})
+
+    answer = await client(provider, **conversation_target()).ask("Third?", ["First?", "Second?"])
+
+    assert answer.reply is None
+    assert answer.error == "The bot returned HTTP 500."
+    assert [turn.customer for turn in answer.earlier] == ["First?"]
+    assert calls == 2
+
+
+@pytest.mark.anyio
+async def test_a_target_that_cant_hold_a_conversation_says_so_and_sends_nothing() -> None:
+    calls = 0
+
+    def provider(_: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        return httpx2.Response(200, json={"reply": "Hi"})
+
+    answer = await client(provider).ask("Second?", ["First?"])
+
+    assert answer.reply is None
+    assert answer.error == NO_CONVERSATION
+    assert calls == 0
+
+
+@pytest.mark.anyio
+async def test_a_question_mentioning_the_placeholder_is_only_text() -> None:
+    provider, sent = script({"reply": "Hi"})
+
+    await client(provider, **conversation_target()).ask("{{conversation}}")
+
+    assert sent == [[{"role": "user", "content": "{{conversation}}"}]]
+
+
+@pytest.mark.parametrize(
+    "request_body",
+    [
+        pytest.param({"nested": {"history": "{{conversation}}"}}, id="in-a-mapping"),
+        pytest.param({"parts": ["{{conversation}}"]}, id="in-a-list"),
+    ],
+)
+@pytest.mark.anyio
+async def test_the_placeholder_is_found_wherever_it_is(request_body: dict[str, Any]) -> None:
+    async def provider(_: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={"reply": "Hi"})
+
+    answer = await client(provider, request=request_body).ask("Second?", ["First?"])
+
+    assert answer.reply == "Hi"
+
+
+def test_a_request_with_neither_placeholder_is_refused() -> None:
+    with pytest.raises(ValidationError, match="conversation"):
+        target(request={"messages": "nothing"})

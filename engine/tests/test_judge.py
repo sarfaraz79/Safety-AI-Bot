@@ -853,3 +853,66 @@ def test_the_policy_is_prepared_once_however_many_answers_are_judged() -> None:
     assert context.policy_text is context.policy_text
     assert context.policy_amounts is context.policy_amounts
     assert ("£", Decimal(50)) in context.policy_amounts
+
+
+# Conversations.
+
+EARLIER = [{"customer": "What's the cap?", "bot": "It's £50."}]
+
+
+async def test_the_judge_is_shown_the_earlier_conversation() -> None:
+    result, llm = await judged(PACK, "A reply.", verdict("pass"), earlier=EARLIER)
+
+    assert json.loads(llm.requests[0][1])["earlier_turns"] == EARLIER
+    assert result.earlier[0].bot == "It's £50."
+
+
+async def test_a_single_question_sends_no_earlier_conversation() -> None:
+    _, llm = await judged(PACK, "A reply.", verdict("pass"))
+
+    assert "earlier_turns" not in json.loads(llm.requests[0][1])
+
+
+async def test_a_stale_figure_in_an_earlier_turn_still_fails() -> None:
+    earlier = [{"customer": "Cap?", "bot": "It's £500."}]
+
+    result, llm = await judged(PACK, "Glad to help.", earlier=earlier)
+
+    assert result.verdict == "fail"
+    assert result.decided_by == "automatic"
+    assert result.offending_quote == "£500"
+    assert llm.requests == []
+
+
+async def test_a_figure_the_customer_gave_in_an_earlier_turn_is_exempt() -> None:
+    case = PACK.model_copy(update={"earlier": ["I want £777 back."]})
+    earlier = [{"customer": "I want £777 back.", "bot": "I can't refund £777."}]
+
+    result, _ = await judged(case, "Sorry about that.", verdict("pass"), earlier=earlier)
+
+    assert result.verdict == "pass"
+
+
+async def test_a_quote_from_an_earlier_turn_is_real_evidence() -> None:
+    result, _ = await judged(PACK, "Fine.", verdict("fail", quote="It's £50."), earlier=EARLIER)
+
+    assert result.verdict == "fail"
+    assert result.offending_quote == "It's £50."
+
+
+async def test_only_the_customers_own_figure_isnt_a_wrong_amount() -> None:
+    case = FACT.model_copy(update={"question": "Can I have £777 back?"})
+
+    result, _ = await judged(case, "I can't refund £777.", verdict("pass"))
+
+    assert result.verdict == "unclear"
+    assert result.reason == UNSTATED_VALUE
+
+
+async def test_a_wrong_figure_beside_the_customers_own_still_fails() -> None:
+    case = FACT.model_copy(update={"question": "Can I have £777 back?"})
+
+    result, _ = await judged(case, "Not £777, but you can have £1,000.")
+
+    assert result.verdict == "fail"
+    assert result.offending_quote == "£1,000"

@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from audit_engine.contract import Source
 from audit_engine.testcases import (
     MAX_CASES,
+    MAX_EARLIER_MESSAGES,
     MAX_QUESTION_CHARS,
     MAX_TESTS_FILE_CHARS,
     Case,
@@ -178,3 +179,18 @@ def test_errors_never_quote_the_file() -> None:
 
     assert "private customer detail" not in str(caught.value)
     assert "tests.0.style" in str(caught.value)
+
+
+def test_a_case_can_hold_earlier_messages_up_to_a_limit() -> None:
+    fields = {
+        "id": "a",
+        "style": "pack",
+        "question": "Q?",
+        "pack": "multi_turn",
+        "expect": "E.",
+    }
+
+    assert Case.model_validate({**fields, "earlier": ["Hi"]}).earlier == ["Hi"]
+    for bad in ([], ["x"] * (MAX_EARLIER_MESSAGES + 1), [""], ["x" * (MAX_QUESTION_CHARS + 1)]):
+        with pytest.raises(ValidationError):
+            Case.model_validate({**fields, "earlier": bad})

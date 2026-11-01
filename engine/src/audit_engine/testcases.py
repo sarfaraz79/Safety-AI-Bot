@@ -1,6 +1,6 @@
 """The test file: questions to put to a bot, and what each answer will be judged against."""
 
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -9,8 +9,9 @@ from audit_engine.fields import Text
 from audit_engine.yaml_files import YamlFileError, dump_yaml, load_model
 
 MAX_QUESTION_CHARS = 4_000
+MAX_EARLIER_MESSAGES = 10
 MAX_TESTS_FILE_CHARS = 10_000_000
-MAX_CASES = MAX_ITEMS * 2 + 1_000  # two questions per contract item, plus the standard packs
+MAX_CASES = MAX_ITEMS * 3 + 1_000  # three questions per contract item, plus the standard packs
 
 
 class CaseFileError(YamlFileError):
@@ -22,11 +23,15 @@ class _CaseModel(BaseModel):
 
 
 class Case(_CaseModel):
-    """One question. It tests a contract item (`direct`, `reworded`) or a standard pack (`pack`)."""
+    """One question, testing a contract item (`direct`, `reworded`, `edge`) or a `pack`."""
 
     id: str = Field(max_length=400, pattern=r"^[A-Za-z0-9_.-]+$")
-    style: Literal["direct", "reworded", "pack"]
+    style: Literal["direct", "reworded", "edge", "pack"]
     question: Text = Field(max_length=MAX_QUESTION_CHARS)
+    # What the customer says first, one message at a time, before `question`:
+    earlier: list[Annotated[Text, Field(max_length=MAX_QUESTION_CHARS)]] | None = Field(
+        default=None, min_length=1, max_length=MAX_EARLIER_MESSAGES
+    )
     # For a contract item:
     item: str | None = Field(default=None, max_length=300, pattern=r"^[A-Za-z0-9_.-]+$")
     statement: Text | None = Field(default=None, max_length=1_000)

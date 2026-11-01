@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<title>Before and after</title>
+{% include "_style.html.j2" %}
+</head>
+<body>
+<main>
+<h1>Before and after</h1>
+<p class="meta">Generated {{ comparison.generated_at.strftime("%-d %B %Y, %H:%M %Z") }}.</p>
+{% if comparison.policy_changed %}
+<p class="notice"><strong>The policy changed between these runs.</strong> A test may now be held to different facts.</p>
+{% endif %}
+<p class="notice"><strong>Treat these verdicts with care.</strong> A single run of a test can differ by chance, so repeat a test before trusting one change. Every change still needs checking by a person.</p>
+
+<section class="totals" aria-label="Totals">
+  <div class="total"><b>{{ comparison.got_worse | length }}</b><span>Got worse</span></div>
+  <div class="total"><b>{{ comparison.got_better | length }}</b><span>Got better</span></div>
+  <div class="total"><b>{{ comparison.still_failing | length }}</b><span>Still failing</span></div>
+  <div class="total"><b>{{ comparison.unchanged }}</b><span>No change</span></div>
+  <div class="total"><b>{{ comparison.pass_rate_before }}% to {{ comparison.pass_rate_after }}%</b><span>Tests fully passed</span></div>
+</section>
+
+{% macro show(title, changes) %}
+{% if changes %}
+<h2>{{ title }} ({{ changes | length }})</h2>
+{% for change in changes %}
+<article class="test">
+  <h3>{% if change.severity %}<span class="badge {{ change.severity }}">{{ change.severity }}</span>{% endif %} {{ change.case_id }}</h3>
+  <dl>
+    <dt>Result</dt>
+    <dd>{{ change.before or "not in that run" }} to {{ change.after or "not in this run" }}</dd>
+    <dt>Customer asked</dt>
+    <dd>{{ change.question }}</dd>
+    {% if change.reply is not none %}
+    <dt>Bot replied</dt>
+    <dd>{{ change.reply }}</dd>
+    {% endif %}
+    {% if change.reason %}
+    <dt>Why</dt>
+    <dd>{{ change.reason }}</dd>
+    {% endif %}
+  </dl>
+</article>
+{% endfor %}
+{% endif %}
+{% endmacro %}
+
+{{ show("Got worse", comparison.got_worse) }}
+{{ show("Still failing", comparison.still_failing) }}
+{{ show("Got better", comparison.got_better) }}
+{{ show("New tests", comparison.new_tests) }}
+{{ show("Removed tests", comparison.removed_tests) }}
+{% if comparison.reworded_tests %}
+<h2>Can't be compared ({{ comparison.reworded_tests | length }})</h2>
+<ul class="plain">
+{% for case_id in comparison.reworded_tests %}<li>{{ case_id }}: its question changed between runs</li>
+{% endfor %}</ul>
+{% endif %}
+</main>
+</body>
+</html>

@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from audit_engine import cli
@@ -123,3 +124,94 @@ def test_a_missing_results_file_gives_a_plain_message(tmp_path: Path) -> None:
 
     assert result.exit_code == common.EXIT_FAILED
     assert "No such file" in result.stderr
+
+
+def write_contract(path: Path, sha256: str | None = None) -> Path:
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "source": {"document": "p.md", "sha256": sha256 or "a" * 64},
+                "items": [
+                    {
+                        "id": "policy-1",
+                        "kind": "rule",
+                        "statement": "A rule.",
+                        "section": "A section",
+                        "quote": "A quote here.",
+                        "approved": True,
+                    }
+                ],
+            }
+        ),
+        "utf-8",
+    )
+    return path
+
+
+def sourced_line() -> str:
+    return render_result(
+        JudgedAnswer.model_validate(
+            {
+                "source": {"document": "p.md", "sha256": "a" * 64},
+                "case": {
+                    "id": "policy-1-direct",
+                    "style": "direct",
+                    "question": "Can you?",
+                    "item": "policy-1",
+                    "statement": "A rule.",
+                    "quote": "A quote here.",
+                },
+                "attempt": 1,
+                "reply": "No.",
+                "captured": {},
+                "verdict": "pass",
+                "decided_by": "model",
+                "reason": "Fine.",
+                "offending_quote": None,
+            }
+        )
+    )
+
+
+def test_a_contract_adds_coverage_to_the_report(tmp_path: Path) -> None:
+    results = tmp_path / "results.jsonl"
+    results.write_text(sourced_line(), "utf-8")
+    output = tmp_path / "report.html"
+    contract = write_contract(tmp_path / "contract.yaml")
+
+    result = runner.invoke(
+        cli.app, ["report", str(results), "-o", str(output), "--contract", str(contract)]
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(output.with_suffix(".json").read_text("utf-8"))
+    assert data["metrics"]["coverage"]["percent"] == 100.0
+
+
+def test_a_contract_for_a_different_policy_is_refused(tmp_path: Path) -> None:
+    results = tmp_path / "results.jsonl"
+    results.write_text(sourced_line(), "utf-8")
+    contract = write_contract(tmp_path / "contract.yaml", "b" * 64)
+
+    result = runner.invoke(
+        cli.app,
+        ["report", str(results), "-o", str(tmp_path / "r.html"), "--contract", str(contract)],
+    )
+
+    assert result.exit_code == common.EXIT_FAILED
+    assert "isn't the one" in result.output
+
+
+def test_a_damaged_contract_is_refused(tmp_path: Path) -> None:
+    results = tmp_path / "results.jsonl"
+    results.write_text(sourced_line(), "utf-8")
+    contract = tmp_path / "contract.yaml"
+    contract.write_text("not: a contract", "utf-8")
+
+    result = runner.invoke(
+        cli.app,
+        ["report", str(results), "-o", str(tmp_path / "r.html"), "--contract", str(contract)],
+    )
+
+    assert result.exit_code == common.EXIT_FAILED
+    assert "Could not use" in result.output
