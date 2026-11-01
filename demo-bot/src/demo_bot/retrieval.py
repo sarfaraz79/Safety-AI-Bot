@@ -1,8 +1,9 @@
 """Keyword search over knowledge base chunks, ranked with Okapi BM25."""
 
+import heapq
 import math
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -41,31 +42,34 @@ class BM25Index:
         if not chunks:
             raise ValueError("The index needs at least one chunk.")
         self._chunks = tuple(chunks)
-        self._term_counts = [Counter(tokenize(f"{c.title}\n{c.text}")) for c in self._chunks]
-        self._lengths = [counts.total() for counts in self._term_counts]
-        self._average_length = sum(self._lengths) / len(self._lengths) or 1.0
+        term_counts = [Counter(tokenize(f"{c.title}\n{c.text}")) for c in self._chunks]
+        lengths = [counts.total() for counts in term_counts]
+        average_length = sum(lengths) / len(lengths) or 1.0
+        self._length_norms = [1 - _B + _B * length / average_length for length in lengths]
 
-        chunk_count = len(self._chunks)
-        document_frequency = Counter(term for counts in self._term_counts for term in counts)
+        # An inverted index: for each term, the chunks holding it and how often.
+        self._postings: dict[str, list[tuple[int, int]]] = defaultdict(list)
+        for position, counts in enumerate(term_counts):
+            for term, frequency in counts.items():
+                self._postings[term].append((position, frequency))
+
         # Lucene's variant of IDF, which stays positive for terms found in most chunks.
+        chunk_count = len(self._chunks)
         self._idf = {
-            term: math.log(1 + (chunk_count - freq + 0.5) / (freq + 0.5))
-            for term, freq in document_frequency.items()
+            term: math.log(1 + (chunk_count - len(postings) + 0.5) / (len(postings) + 0.5))
+            for term, postings in self._postings.items()
         }
 
     def search(self, query: str, top_k: int) -> list[SearchResult]:
         """Return up to `top_k` chunks that share at least one term with the query, best first."""
-        terms = set(tokenize(query))
-        results = []
-        for chunk, counts, length in zip(
-            self._chunks, self._term_counts, self._lengths, strict=True
-        ):
-            score = sum(self._term_score(counts[t], length, t) for t in terms if t in counts)
-            if score > 0:
-                results.append(SearchResult(chunk, score))
-        results.sort(key=lambda result: result.score, reverse=True)
-        return results[:top_k]
+        scores: dict[int, float] = defaultdict(float)
+        for term in sorted(set(tokenize(query))):
+            for position, frequency in self._postings.get(term, ()):
+                scores[position] += self._term_score(frequency, position, term)
+        # Earlier chunks win ties, so results stay the same from one run to the next.
+        best = heapq.nlargest(top_k, scores.items(), key=lambda entry: (entry[1], -entry[0]))
+        return [SearchResult(self._chunks[position], score) for position, score in best]
 
-    def _term_score(self, frequency: int, length: int, term: str) -> float:
-        length_norm = 1 - _B + _B * length / self._average_length
+    def _term_score(self, frequency: int, position: int, term: str) -> float:
+        length_norm = self._length_norms[position]
         return self._idf[term] * frequency * (_K1 + 1) / (frequency + _K1 * length_norm)

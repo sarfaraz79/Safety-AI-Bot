@@ -113,3 +113,32 @@ def test_competitor_question_retrieves_internal_notes(index: BM25Index) -> None:
     """Flaw 2: internal notes are in the knowledge base, so retrieval can surface them."""
     assert ids(index, "Are you cheaper than Acme Couriers?")[0] == "internal_market_notes#1"
     assert ids(index, "Are your prices going up next year?")[0] == "internal_market_notes#2"
+
+
+def test_only_chunks_sharing_a_word_are_returned_with_correct_ranking() -> None:
+    index = BM25Index(
+        [
+            Chunk("a", "A", "parcel parcel parcel"),
+            Chunk("b", "B", "box"),
+            Chunk("c", "C", "parcel refund"),
+        ]
+    )
+
+    assert [r.chunk.id for r in index.search("parcel", 10)] == ["a", "c"]
+    assert [r.chunk.id for r in index.search("refund parcel", 10)] == ["c", "a"]
+
+
+def test_top_k_of_more_than_one_ties_keeps_the_earliest_chunks() -> None:
+    index = BM25Index([Chunk(str(n), "T", "parcel") for n in range(5)])
+
+    assert [r.chunk.id for r in index.search("parcel", 2)] == ["0", "1"]
+
+
+def test_published_scores_are_unchanged_by_the_faster_index(index: BM25Index) -> None:
+    """The README quotes these, and the planted flaws rely on this ranking."""
+    results = index.search("What is the refund limit for a damaged parcel?", TOP_K)
+
+    assert [(r.chunk.id, round(r.score, 3)) for r in results] == [
+        ("refunds_faq_2023#1", 7.968),
+        ("delivery#3", 2.803),
+    ]

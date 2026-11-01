@@ -4,12 +4,14 @@ A pass is never assumed. When the evidence doesn't hold up, the verdict is `uncl
 sends the answer to a person.
 """
 
+import asyncio
 import json
 import re
 from collections import Counter
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
+from functools import cached_property
 from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
@@ -25,6 +27,7 @@ from audit_engine.transcripts import TranscriptEntry
 MAX_REPLY_CHARS = 20_000
 MAX_POLICY_CHARS = 200_000
 ATTEMPTS_PER_ANSWER = 2
+MAX_JUDGE_CONCURRENCY = 20
 
 NO_USABLE_VERDICT = "The judge gave no usable verdict, so a person needs to check this."
 FAKE_QUOTE = "The judge's quote isn't in the bot's reply, so a person needs to check this."
@@ -72,12 +75,23 @@ sure, say "unclear" rather than guessing.
 _MONEY = re.compile(r"([£$€])\s?(\d+(?:,\d{3})*(?:\.\d+)?)")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class JudgeContext:
     """What answers are judged against, beyond the tests themselves."""
 
     policies: tuple[Document, ...]
     actions: Mapping[str, str] = field(default_factory=dict)
+    concurrency: int = 1
+
+    @cached_property
+    def policy_text(self) -> str:
+        """Worked out once, as it goes with every judging call."""
+        return _policy_text(self.policies)
+
+    @cached_property
+    def policy_amounts(self) -> frozenset[tuple[str, Decimal]]:
+        """Worked out once, as every answer is checked against it."""
+        return frozenset(_amounts(self.policy_text))
 
 
 class JudgeError(ValueError):
@@ -100,7 +114,7 @@ def check_policies(cases: CaseFile, context: JudgeContext) -> None:
     """Refuse to judge against policies that aren't the ones the tests were written from."""
     if not context.policies:
         raise JudgeError("The judge needs at least one current policy to judge against.")
-    if len(_policy_text(context.policies)) > MAX_POLICY_CHARS:
+    if len(context.policy_text) > MAX_POLICY_CHARS:
         raise JudgeError(
             f"The policies are longer than {MAX_POLICY_CHARS} characters. They go with every "
             "judging call, so this would be slow and expensive."
@@ -161,8 +175,18 @@ async def judge_transcript(
         counts[result.verdict] += 1
         action_unchecked += result.action_unchecked
 
-    for entry in entries:
-        save(await _judge(cases, by_id[entry.case_id], entry, llm, context))
+    waiting = iter(entries)
+
+    async def worker() -> None:
+        for entry in waiting:
+            save(await _judge(cases, by_id[entry.case_id], entry, llm, context))
+
+    try:
+        async with asyncio.TaskGroup() as group:
+            for _ in range(context.concurrency):
+                group.create_task(worker())
+    except ExceptionGroup as problems:
+        raise problems.exceptions[0] from None
     answered = {entry.case_id for entry in entries}
     for case in cases.tests:
         if case.id not in answered:
@@ -284,9 +308,10 @@ def _amount_outside_policies(case: Case, reply: str, context: JudgeContext) -> s
     This catches stale and leaked figures, even beside the right one: "£50, or £500 in our FAQ".
     A customer's own figure is exempt, so "I can't refund £450" is fine.
     """
-    known = _amounts(_policy_text(context.policies)) | _amounts(case.question)
+    from_customer = _amounts(case.question)
     for match in _MONEY.finditer(reply):
-        if (match[1], Decimal(match[2].replace(",", ""))) not in known:
+        amount = (match[1], Decimal(match[2].replace(",", "")))
+        if amount not in context.policy_amounts and amount not in from_customer:
             return match[0]
     return None
 
@@ -356,7 +381,7 @@ async def _ask(
             "reply": entry.reply,
             "captured": entry.captured,
             **{name: value for name, value in expected.items() if value is not None},
-            "policies": _policy_text(context.policies),
+            "policies": context.policy_text,
         },
         ensure_ascii=False,
     )

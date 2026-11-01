@@ -320,6 +320,22 @@ def test_a_transcript_that_cannot_be_written_stops_cleanly(
     assert "Could not write" in result.stderr
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows handles links differently")
+def test_a_link_planted_at_the_output_cannot_redirect_results(
+    tests_file: Path, target_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    use_bot(monkeypatch, good_bot)
+    victim = tmp_path / "important.txt"
+    victim.write_text("keep me", encoding="utf-8")
+    link = tmp_path / "transcript.jsonl"
+    link.symlink_to(victim)
+
+    result = run("run", tests_file, "--target", target_file, "-o", link, "--force")
+
+    assert result.exit_code == common.EXIT_FAILED
+    assert victim.read_text("utf-8") == "keep me"
+
+
 def test_the_real_client_is_made_from_the_target() -> None:
     target = Target.model_validate(
         {"url": "https://bot.example", "request": {"q": "{{question}}"}, "reply_path": "r"}

@@ -1,5 +1,7 @@
+import asyncio
 import json
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -796,3 +798,58 @@ async def test_a_checked_action_is_not_flagged() -> None:
     result, _ = await act(HAND_OVER, "Passed on.", USED_HAND_OVER, verdict("pass"))
 
     assert result.action_unchecked is False
+
+
+# Several answers can be judged at once, without changing any verdict.
+
+
+class SlowLLM:
+    def __init__(self) -> None:
+        self.running = 0
+        self.busiest = 0
+
+    async def complete(self, _system: str, user: str) -> str:
+        self.running += 1
+        self.busiest = max(self.busiest, self.running)
+        await asyncio.sleep(0.001)
+        self.running -= 1
+        return verdict("fail", quote=json.loads(user)["reply"])
+
+    async def aclose(self) -> None:
+        return None
+
+
+async def test_answers_judged_at_once_each_keep_their_own_verdict() -> None:
+    cases = [PACK.model_copy(update={"id": f"t{n}", "question": f"Q{n}?"}) for n in range(30)]
+    entries = [entry(case, f"Reply number {n} here.") for n, case in enumerate(cases)]
+    llm = SlowLLM()
+    results: list[JudgedAnswer] = []
+
+    summary = await judge_transcript(
+        CaseFile(tests=cases), entries, llm, results.append, JudgeContext((POLICY,), concurrency=5)
+    )
+
+    assert llm.busiest == 5
+    assert summary.counts == {"fail": 30}
+    assert {(r.case.id, r.offending_quote) for r in results} == {
+        (f"t{n}", f"Reply number {n} here.") for n in range(30)
+    }
+
+
+async def test_a_provider_failure_stops_every_worker_and_raises_the_real_error() -> None:
+    cases = [PACK.model_copy(update={"id": f"t{n}", "question": f"Q{n}?"}) for n in range(20)]
+    llm = ScriptedLLM(LLMError("RateLimitError"))
+    context = JudgeContext((POLICY,), concurrency=3)
+
+    with pytest.raises(LLMError, match="RateLimitError"):
+        await judge_transcript(
+            CaseFile(tests=cases), [entry(c) for c in cases], llm, lambda _: None, context
+        )
+
+
+def test_the_policy_is_prepared_once_however_many_answers_are_judged() -> None:
+    context = JudgeContext((POLICY,))
+
+    assert context.policy_text is context.policy_text
+    assert context.policy_amounts is context.policy_amounts
+    assert ("£", Decimal(50)) in context.policy_amounts
