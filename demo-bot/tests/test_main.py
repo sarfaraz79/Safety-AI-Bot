@@ -18,7 +18,14 @@ def test_starts_uvicorn_with_the_configured_address(monkeypatch: pytest.MonkeyPa
 
     [(app, options)] = calls
     assert isinstance(app, FastAPI)
-    assert options == {"host": "127.0.0.1", "port": 8123, "server_header": False}
+    assert options == {
+        "host": "127.0.0.1",
+        "port": 8123,
+        "server_header": False,
+        "http": "h11",
+        "h11_max_incomplete_event_size": entry_point.MAX_HEADER_BYTES,
+        "limit_concurrency": entry_point.MAX_CONNECTIONS,
+    }
 
 
 def test_missing_configuration_names_the_variables_to_set() -> None:

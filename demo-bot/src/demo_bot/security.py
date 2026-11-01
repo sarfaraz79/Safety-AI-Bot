@@ -1,7 +1,9 @@
 """HTTP access controls: who may call the API, and how much they may send."""
 
+import asyncio
 import ipaddress
 import secrets
+import time
 from collections.abc import Awaitable, Callable
 from typing import Annotated
 
@@ -14,6 +16,13 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 _bearer_scheme = HTTPBearer(auto_error=False)
 
 AccessCheck = Callable[[Request, HTTPAuthorizationCredentials | None], Awaitable[None]]
+
+_SECURITY_HEADERS = (
+    (b"x-content-type-options", b"nosniff"),
+    (b"x-frame-options", b"DENY"),
+    (b"referrer-policy", b"no-referrer"),
+    (b"cache-control", b"no-store"),
+)
 
 
 def is_loopback(host: str | None) -> bool:
@@ -81,6 +90,50 @@ def _hostname(address: str) -> str:
     return address.partition(":")[0]
 
 
+class RateLimiter:
+    """A token bucket: allows short bursts, and holds the long-run rate at `per_minute`.
+
+    Each check takes constant time and memory. The count is per process, so running several
+    processes multiplies the limit. The real ceiling on spending is the model provider's limit.
+    """
+
+    def __init__(self, per_minute: int, clock: Callable[[], float] = time.monotonic) -> None:
+        self._capacity = float(per_minute)
+        self._per_second = per_minute / 60
+        self._clock = clock
+        self._tokens = self._capacity
+        self._updated = clock()
+
+    def allow(self) -> bool:
+        now = self._clock()
+        refill = (now - self._updated) * self._per_second
+        self._tokens = min(self._capacity, self._tokens + refill)
+        self._updated = now
+        if self._tokens < 1:
+            return False
+        self._tokens -= 1
+        return True
+
+
+class SecurityHeadersMiddleware:
+    """Tell browsers not to guess content types, frame these pages, or cache chat replies."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                message["headers"] = [*message.get("headers", ()), *_SECURITY_HEADERS]
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
 class BodySizeLimitMiddleware:
     """Reject request bodies larger than `max_bytes` with 413, before the app parses them.
 
@@ -88,9 +141,10 @@ class BodySizeLimitMiddleware:
     also covers chunked uploads, which have no Content-Length header to check up front.
     """
 
-    def __init__(self, app: ASGIApp, max_bytes: int) -> None:
+    def __init__(self, app: ASGIApp, max_bytes: int, read_timeout_seconds: float = 10.0) -> None:
         self.app = app
         self.max_bytes = max_bytes
+        self.read_timeout_seconds = read_timeout_seconds
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -100,21 +154,31 @@ class BodySizeLimitMiddleware:
         chunks: list[bytes] = []
         size = 0
         more_body = True
-        while more_body:
-            message = await receive()
-            if message["type"] != "http.request":  # the client disconnected
-                return
-            chunk: bytes = message.get("body", b"")
-            size += len(chunk)
-            if size > self.max_bytes:
-                too_large = JSONResponse(
-                    {"detail": "Request body too large."},
-                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-                )
-                await too_large(scope, receive, send)
-                return
-            chunks.append(chunk)
-            more_body = message.get("more_body", False)
+        try:
+            # A time limit, so a client sending a byte at a time can't hold a connection open.
+            async with asyncio.timeout(self.read_timeout_seconds):
+                while more_body:
+                    message = await receive()
+                    if message["type"] != "http.request":  # the client disconnected
+                        return
+                    chunk: bytes = message.get("body", b"")
+                    size += len(chunk)
+                    if size > self.max_bytes:
+                        too_large = JSONResponse(
+                            {"detail": "Request body too large."},
+                            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                        )
+                        await too_large(scope, receive, send)
+                        return
+                    chunks.append(chunk)
+                    more_body = message.get("more_body", False)
+        except TimeoutError:
+            too_slow = JSONResponse(
+                {"detail": "Request body took too long to arrive."},
+                status_code=status.HTTP_408_REQUEST_TIMEOUT,
+            )
+            await too_slow(scope, receive, send)
+            return
 
         body = b"".join(chunks)
         body_delivered = False

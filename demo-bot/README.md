@@ -84,6 +84,9 @@ Environment variables, or the same names in `.env`:
 | `DEMO_BOT_RETRIEVAL_TOP_K` | `2` | Knowledge base sections sent to the model |
 | `DEMO_BOT_HOST` / `DEMO_BOT_PORT` | `127.0.0.1` / `8000` | |
 | `DEMO_BOT_AUTH_TOKEN` | none | Required for any host other than loopback; 16+ characters |
+| `DEMO_BOT_CHAT_TIMEOUT_SECONDS` | `120` | Longest a whole chat can take, then 504 |
+| `DEMO_BOT_MAX_CONCURRENT_CHATS` | `50` | Chats running at once, then 503 |
+| `DEMO_BOT_CHATS_PER_MINUTE` | `600` | Long-run rate, per process, then 429 |
 
 ## Security
 
@@ -94,7 +97,8 @@ Environment variables, or the same names in `.env`:
 - Model replies are validated too. An unusable reply becomes a 502, not a crash.
 - Tools are simulated: no money moves and no tickets are raised.
 - Logs record counts only, never message content or secrets. Configuration errors never echo values.
-- Before putting it on the internet, add HTTPS and rate limiting at the proxy: every chat spends model credits.
+- Bodies must arrive within 10 seconds, headers are limited to 16 KB, and every response carries security headers. With a token set, `/docs` and `/openapi.json` are switched off.
+- Before putting it on the internet, add HTTPS and per-client rate limiting at the proxy, and set a spending limit with the model provider. The bot's own limits are per process and shared by all clients.
 
 ## Code map
 

@@ -1,9 +1,15 @@
+import asyncio
 from typing import Any
 
 import pytest
 from starlette.types import Message, Receive, Scope, Send
 
-from demo_bot.security import BodySizeLimitMiddleware, is_loopback
+from demo_bot.security import (
+    BodySizeLimitMiddleware,
+    RateLimiter,
+    SecurityHeadersMiddleware,
+    is_loopback,
+)
 
 HTTP_SCOPE: Scope = {"type": "http", "method": "POST", "path": "/chat", "headers": []}
 
@@ -148,4 +154,106 @@ async def test_non_http_traffic_passes_straight_through() -> None:
         raise AssertionError("The middleware must not send anything.")
 
     await BodySizeLimitMiddleware(app, max_bytes=10)({"type": "lifespan"}, receive, send)
+    assert seen == ["lifespan"]
+
+
+@pytest.mark.anyio
+async def test_a_body_that_arrives_too_slowly_is_refused() -> None:
+    app = RecordingApp()
+
+    async def never_finishes() -> Message:
+        await asyncio.sleep(10)
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    sent = await run(
+        BodySizeLimitMiddleware(app, max_bytes=10, read_timeout_seconds=0.01), never_finishes
+    )
+
+    assert sent[0]["status"] == 408
+    assert app.body is None
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 1_000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_rate_limiter_allows_a_burst_up_to_its_limit_then_refuses() -> None:
+    limiter = RateLimiter(3, FakeClock())
+
+    assert [limiter.allow() for _ in range(4)] == [True, True, True, False]
+
+
+def test_rate_limiter_refills_over_time() -> None:
+    clock = FakeClock()
+    limiter = RateLimiter(60, clock)
+    for _ in range(60):
+        limiter.allow()
+    assert limiter.allow() is False
+
+    clock.now += 1
+
+    assert limiter.allow() is True
+    assert limiter.allow() is False
+
+
+def test_rate_limiter_never_saves_up_more_than_its_limit() -> None:
+    clock = FakeClock()
+    limiter = RateLimiter(2, clock)
+
+    clock.now += 86_400
+
+    assert [limiter.allow() for _ in range(3)] == [True, True, False]
+
+
+def test_a_full_minute_of_requests_stays_at_the_rate() -> None:
+    clock = FakeClock()
+    limiter = RateLimiter(60, clock)
+    for _ in range(60):
+        limiter.allow()
+
+    allowed = 0
+    for _ in range(600):
+        clock.now += 0.1
+        allowed += limiter.allow()
+
+    assert 59 <= allowed <= 60  # adding up tenths of a second can lose a sliver of a token
+
+
+@pytest.mark.anyio
+async def test_security_headers_are_added_and_existing_ones_kept() -> None:
+    async def inner(_scope: Scope, _receive: Receive, send: Send) -> None:
+        await send({"type": "http.response.start", "status": 200, "headers": [(b"x-own", b"1")]})
+        await send({"type": "http.response.body", "body": b"hi"})
+
+    sent: list[Message] = []
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    await SecurityHeadersMiddleware(inner)(HTTP_SCOPE, body_stream(b""), send)
+
+    headers = dict(sent[0]["headers"])
+    assert headers[b"x-own"] == b"1"
+    assert headers[b"x-content-type-options"] == b"nosniff"
+    assert headers[b"x-frame-options"] == b"DENY"
+    assert headers[b"cache-control"] == b"no-store"
+    assert sent[1]["body"] == b"hi"
+
+
+@pytest.mark.anyio
+async def test_security_headers_leave_other_traffic_alone() -> None:
+    seen: list[str] = []
+
+    async def inner(scope: Scope, _receive: Receive, _send: Send) -> None:
+        seen.append(scope["type"])
+
+    async def no_send(_message: Message) -> None:
+        raise AssertionError("Nothing should be sent.")
+
+    await SecurityHeadersMiddleware(inner)({"type": "lifespan"}, body_stream(b""), no_send)
+
     assert seen == ["lifespan"]

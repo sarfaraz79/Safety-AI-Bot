@@ -50,6 +50,47 @@ Storage: SQLite (runs, test cases, results).
 - Evidence log: append-only record of changes, test runs and approvals, exportable for auditors and insurers.
 - Web app: FastAPI with server-rendered pages (HTMX) to start.
 
+## How it's built
+
+This section describes the system as it exists today. Phase 2 above describes where it's going.
+
+| Pattern | What it means here |
+|---|---|
+| **Modular monolith, in a monorepo** | One repository and one process per run, with separate packages. The engine and bot share no code |
+| **Pipes and filters** | `extract`, `generate`, `run`, `judge` and `report` each read a file and write the next. Any step can be re-run or inspected |
+| **Layered** | `commands/` handles the command line, the domain modules hold the logic, and `llm.py` and `target.py` talk to the outside |
+| **Ports and adapters** | `LLMClient` is an interface, so changing model provider touches one file. A target file adapts the engine to any bot with no code |
+| **Stateless service** | The bot keeps nothing between requests, so more copies can run behind a load balancer |
+| **Human in the loop** | Nothing is tested until a person approves it, and the model can't approve anything |
+| **Fail closed** | When something's doubtful, the verdict is `unclear` or the run stops. A pass is never assumed |
+| **Validate at every boundary** | Files, requests, model replies and bot replies are all treated as untrusted |
+
+### Speed of the main operations
+
+*n* is the size of the input, and limits on size keep each one bounded. Python's dictionaries and sets take constant time on average.
+
+| Operation | Data structure | Cost |
+|---|---|---|
+| Find a document section by heading | Hash map | O(1) |
+| Check a section's quote, after its first use | Cached text | O(quote and section length) |
+| Check a test id, or an amount, against a known list | Hash map or set | O(1) |
+| Rate limit check | Token bucket | O(1) |
+| Next request's start time | Pacer | O(1) |
+| Search the knowledge base | Inverted index and bounded heap | O(chunks holding the query's words), not all chunks |
+| Read or split a document | Single pass | O(n) |
+| Read a transcript or results file | Single pass | O(n) |
+| Build a report | Group by test, then sort | O(n log t), for t tests |
+
+Sorting can't be done in O(n) in general, and the report's sort is on a short list of failed tests, so it stays. The real limit on speed is waiting for the model, at around a second per call, and no data structure changes that. Judging can run several answers at once with `--concurrency`.
+
+### Scale and its limits
+
+- **Engine:** tested with 11,000 tests and 100,000 answers using a fake model, taking seconds. Real runs are limited by the model provider's rate limits. It runs on one machine, using files.
+- **Bot:** can run as several copies, though each has its own rate limit.
+- **Beyond one machine:** needs what Phase 2 plans, namely a database, a job queue and workers. It isn't built, because no customer needs it yet.
+
+Reliability comes from limits on every outside call, answers saved as they arrive, files written all at once, and clear exit codes. It hasn't been run in production. See [security.md](security.md) for the security model and its gaps.
+
 ## Tech stack
 
 Python 3.12+, uv workspace, FastAPI, Pydantic, Typer (engine CLI), httpx2, the official `openai` SDK for any OpenAI-compatible model endpoint, pypdf or pdfplumber (avoid PyMuPDF, AGPL), Jinja2. Quality gates: ruff (including security rules), mypy strict, pytest with coverage, pip-audit, all in GitHub Actions. SQLite in Phase 1; Postgres + pgvector, S3 and a Postgres-backed job queue in Phase 2. Docker and Terraform on AWS London (eu-west-2) for UK data residency. Personal data stripped on ingest (e.g. Presidio). Secrets in AWS Secrets Manager, never in code or chat.
