@@ -16,10 +16,7 @@ class _RepeatedKeyError(Exception):
 
 
 class _StrictLoader(yaml.SafeLoader):
-    """Safe loading that also refuses duplicate keys and merge keys (`<<`).
-
-    By default the last key wins, so a second `approved: true` would silently overrule the first.
-    """
+    """Safe loading that also refuses duplicate keys and merge keys (`<<`)."""
 
     def construct_mapping(self, node: MappingNode, deep: bool = False) -> dict[Hashable, object]:
         keys = [self.construct_object(key_node, deep=True) for key_node, _ in node.value]
@@ -36,7 +33,7 @@ def dump_yaml(data: object) -> str:
 def load_model[ModelT: BaseModel](
     text: str, model: type[ModelT], *, name: str, max_chars: int, error: type[YamlFileError]
 ) -> ModelT:
-    """Read and check a file. `name` is how messages refer to it, as in "The contract is..."."""
+    """Read and check a file. `name` is what error messages call it."""
     if len(text) > max_chars:
         raise error(f"The {name} is longer than {max_chars} characters.")
     try:

@@ -69,7 +69,7 @@ def _decode(raw: bytes) -> str:
 
 
 def _visible_lines(text: str) -> list[str]:
-    """Remove what a reader never sees: comments, which may hold drafts or hidden instructions."""
+    """Remove comments, which a reader never sees."""
     normal_endings = text.replace("\r\n", "\n").replace("\r", "\n")
     return _without_front_matter(_without_comments(normal_endings).split("\n"))
 
@@ -118,7 +118,7 @@ def _split_at_headings(lines: list[str]) -> list[tuple[str, list[str]]]:
 
 
 def _heading_text(after_marker: str) -> str:
-    """Trim spaces and any closing hashes, as in `## Title ##`. The `#` in `## C#` stays."""
+    """Trim spaces and closing hashes, as in `## Title ##`, but not the `#` in `## C#`."""
     text = after_marker.strip(" \t")
     without_closing = text.rstrip("#")
     if not without_closing or without_closing[-1] in " \t":
@@ -158,10 +158,7 @@ def _to_sections(parts: list[tuple[str, list[str]]]) -> tuple[Section, ...]:
 
 
 def _unique_heading(heading: str, used: set[str], next_number: dict[str, int]) -> str:
-    """Number repeated headings, so `section` in a contract points to exactly one place.
-
-    `next_number` remembers where each heading got to, so numbering never has to start again.
-    """
+    """Number a repeated heading. `next_number` holds the next number for each heading."""
     candidate = heading
     number = next_number.get(heading, 1)
     while candidate in used:

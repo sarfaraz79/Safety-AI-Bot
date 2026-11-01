@@ -17,11 +17,7 @@ class QuoteProblem(StrEnum):
 
 
 def check_item(item: Item, document: Document) -> QuoteProblem | None:
-    """Return what's wrong with an item's evidence, or None if it holds up.
-
-    This proves the words exist in the source, not that the statement reads them fairly:
-    "refund is available" passes against "No refund is available". That is for the reviewer.
-    """
+    """Return what's wrong with an item's evidence, or None. Fair reading is for the reviewer."""
     section = document.by_heading.get(item.section)
     if section is None:
         return QuoteProblem.UNKNOWN_SECTION
@@ -36,7 +32,7 @@ def check_item(item: Item, document: Document) -> QuoteProblem | None:
 
 
 def with_single_spaces(text: str) -> str:
-    """Line breaks and repeated spaces are the only differences a quote may have from its source."""
+    """Collapse line breaks and repeated spaces."""
     return " ".join(text.split())
 
 
@@ -45,10 +41,7 @@ _section_words = lru_cache(maxsize=MAX_SECTIONS)(with_single_spaces)
 
 
 def contains_whole(text: str, part: str) -> bool:
-    """Find `part` in `text`, where it doesn't begin or end inside a longer word or number.
-
-    A plain search would find "capped at £50" in "capped at £500", and "£1" in "£1,000".
-    """
+    """Find `part` in `text`, so that "£50" doesn't match inside "£500"."""
     position = 0
     while (start := text.find(part, position)) != -1:
         end = start + len(part)
@@ -61,10 +54,7 @@ def contains_whole(text: str, part: str) -> bool:
 
 
 def _splits_a_token(outside: str, edge: str) -> bool:
-    """Would cutting between `edge` and the neighbouring text break a word or number apart?
-
-    `outside` holds up to two neighbouring characters, with the one touching `edge` last.
-    """
+    """Return whether a cut beside `edge` splits a word or number. `outside` ends at the cut."""
     touching = outside[-1:]
     if edge.isalnum() and touching.isalnum():
         return True

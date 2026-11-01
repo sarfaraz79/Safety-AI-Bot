@@ -31,7 +31,7 @@ def main() -> None:
 
 
 def describe_settings_errors(exc: ValidationError) -> str:
-    """List each problem by environment variable name, never echoing values (they may be secret)."""
+    """List each invalid environment variable by name, never its value."""
     lines = []
     for error in exc.errors(include_url=False, include_input=False):
         location = f"DEMO_BOT_{str(error['loc'][0]).upper()}" if error["loc"] else "settings"

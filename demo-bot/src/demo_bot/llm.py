@@ -1,8 +1,4 @@
-"""The boundary with the language model: provider-neutral types and an OpenAI-compatible client.
-
-The rest of the bot only sees the types defined here, so switching provider or SDK means
-changing this module alone.
-"""
+"""Provider-neutral model types, and a client for OpenAI-compatible APIs."""
 
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -95,7 +91,7 @@ class _ProviderChoice(BaseModel):
 
 
 class _ProviderCompletion(BaseModel):
-    """The parts of a provider's reply the bot relies on. The SDK itself doesn't enforce them."""
+    """The parts of a provider's reply the bot relies on."""
 
     choices: list[_ProviderChoice] = Field(min_length=1)
 

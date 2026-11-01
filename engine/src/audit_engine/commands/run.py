@@ -16,7 +16,14 @@ from audit_engine.run import (
     RunSummary,
     run_cases,
 )
-from audit_engine.target import Target, TargetClient, TargetError, parse_target, read_token
+from audit_engine.target import (
+    MAX_TARGET_CHARS,
+    Target,
+    TargetClient,
+    TargetError,
+    parse_target,
+    read_token,
+)
 from audit_engine.testcases import (
     MAX_TESTS_FILE_CHARS,
     Case,
@@ -25,8 +32,6 @@ from audit_engine.testcases import (
     parse_cases,
 )
 from audit_engine.transcripts import TranscriptEntry, render_entry
-
-_MAX_TARGET_FILE_CHARS = 100_000
 
 
 def run_command(
@@ -83,7 +88,7 @@ def read_tests(path: Path) -> CaseFile:
 
 
 def read_target(path: Path) -> Target:
-    text = common.read_text(path, limit=_MAX_TARGET_FILE_CHARS)
+    text = common.read_text(path, limit=MAX_TARGET_CHARS)
     try:
         return parse_target(text)
     except TargetError as exc:

@@ -260,6 +260,16 @@ def test_only_json_requests_are_read(make_client: ClientFactory) -> None:
         pytest.param({"origin": "http://127.0.0.1.evil.example"}, id="lookalike-website"),
         pytest.param({"origin": "null"}, id="sandboxed-page"),
         pytest.param({"origin": "http://["}, id="malformed-origin"),
+        pytest.param({"host": "127.0.0.1:80@evil.example"}, id="host-with-user-part"),
+        pytest.param({"host": "localhost:x"}, id="host-with-invalid-port"),
+        pytest.param({"host": "localhost/evil.example"}, id="host-with-path"),
+        pytest.param({"origin": "http://127.0.0.1:80@evil.example"}, id="origin-with-user-part"),
+        pytest.param({"origin": "http://localhost:x@evil.example"}, id="origin-with-fake-port"),
+        pytest.param({"origin": "http://[::1]evil.example"}, id="origin-after-brackets"),
+        pytest.param({"origin": "http://127.0.0.1#@evil.example"}, id="origin-with-fragment"),
+        pytest.param({"origin": "http://localhost?@evil.example"}, id="origin-with-query"),
+        pytest.param({"origin": "http://localhost?"}, id="origin-with-empty-query"),
+        pytest.param({"origin": "http://local\thost"}, id="origin-with-tab"),
     ],
 )
 def test_websites_cannot_use_a_local_browser_to_reach_the_bot(
@@ -281,6 +291,7 @@ def test_websites_cannot_use_a_local_browser_to_reach_the_bot(
         {"origin": "http://127.0.0.1:8000"},
         {"origin": "http://localhost:8000"},
         {"origin": "http://[::1]:8000"},
+        {"origin": "HTTP://LOCALHOST"},
     ],
 )
 def test_local_pages_like_the_docs_can_chat(
@@ -402,7 +413,7 @@ class EchoLLM:
 async def test_simultaneous_chats_never_see_each_other(
     make_settings: Callable[..., Settings],
 ) -> None:
-    """Decision 6: nothing is shared between users, even when requests overlap."""
+    """Nothing is shared between users, even when requests overlap."""
     transport = httpx2.ASGITransport(
         create_app(make_settings(), llm=EchoLLM()), client=("127.0.0.1", 50000)
     )

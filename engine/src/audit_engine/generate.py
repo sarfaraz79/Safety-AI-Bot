@@ -36,7 +36,7 @@ message that a customer could send as it is, with no placeholders such as [order
 
 
 class GenerateError(ValueError):
-    """The contract can't be used. Raised before any model call, so a mistake costs nothing."""
+    """The contract can't be used. Raised before any model call."""
 
 
 class _Reply(BaseModel):
@@ -116,7 +116,7 @@ async def _ask(item: Item, llm: LLMClient) -> _Reply | None:
 
 
 def _is_usable(reply: _Reply, item: Item) -> bool:
-    """A question holding its own answer proves nothing: a bot could just repeat it."""
+    """Reject a question holding its own answer, which a bot could just repeat."""
     direct, reworded = reply.direct.casefold(), reply.reworded.casefold()
     if direct.strip() == reworded.strip():
         return False

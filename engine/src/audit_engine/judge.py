@@ -1,8 +1,4 @@
-"""Decides whether each answer was right: automatic checks first, then the model.
-
-A pass is never assumed. When the evidence doesn't hold up, the verdict is `unclear`, which
-sends the answer to a person.
-"""
+"""Decides whether each answer was right: automatic checks first, then the model."""
 
 import asyncio
 import json
@@ -85,12 +81,12 @@ class JudgeContext:
 
     @cached_property
     def policy_text(self) -> str:
-        """Worked out once, as it goes with every judging call."""
+        """The policies as one text."""
         return _policy_text(self.policies)
 
     @cached_property
     def policy_amounts(self) -> frozenset[tuple[str, Decimal]]:
-        """Worked out once, as every answer is checked against it."""
+        """Every amount of money in the policies."""
         return frozenset(_amounts(self.policy_text))
 
 
@@ -127,7 +123,7 @@ def check_policies(cases: CaseFile, context: JudgeContext) -> None:
 
 
 def _policy_text(policies: Sequence[Document]) -> str:
-    """Only what a reader can see: the reader has already dropped comments and front matter."""
+    """Join the policies' sections, which already exclude comments and front matter."""
     return "\n\n".join(
         f"# {policy.source.document}\n\n"
         + "\n\n".join(f"## {s.heading}\n{s.text}" for s in policy.sections)
@@ -165,7 +161,6 @@ async def judge_transcript(
     """Judge every answer, recording each as it's decided. A provider failure raises LLMError."""
     check_policies(cases, context)
     check_transcript(cases, entries)
-    by_id = {case.id: case for case in cases.tests}
     counts: Counter[Verdict] = Counter()
     action_unchecked = 0
 
@@ -175,6 +170,22 @@ async def judge_transcript(
         counts[result.verdict] += 1
         action_unchecked += result.action_unchecked
 
+    await _judge_all(cases, entries, llm, save, context)
+    answered = {entry.case_id for entry in entries}
+    for case in cases.tests:
+        if case.id not in answered:
+            save(_not_run(cases, case))
+    return JudgeSummary(counts=counts, action_unchecked=action_unchecked)
+
+
+async def _judge_all(
+    cases: CaseFile,
+    entries: Sequence[TranscriptEntry],
+    llm: LLMClient,
+    save: Callable[[JudgedAnswer], None],
+    context: JudgeContext,
+) -> None:
+    by_id = {case.id: case for case in cases.tests}
     waiting = iter(entries)
 
     async def worker() -> None:
@@ -187,23 +198,20 @@ async def judge_transcript(
                 group.create_task(worker())
     except ExceptionGroup as problems:
         raise problems.exceptions[0] from None
-    answered = {entry.case_id for entry in entries}
-    for case in cases.tests:
-        if case.id not in answered:
-            save(
-                JudgedAnswer(
-                    source=cases.source,
-                    case=case,
-                    attempt=None,
-                    reply=None,
-                    captured={},
-                    verdict="not_run",
-                    decided_by="none",
-                    reason=NOT_RUN,
-                    offending_quote=None,
-                )
-            )
-    return JudgeSummary(counts=counts, action_unchecked=action_unchecked)
+
+
+def _not_run(cases: CaseFile, case: Case) -> JudgedAnswer:
+    return JudgedAnswer(
+        source=cases.source,
+        case=case,
+        attempt=None,
+        reply=None,
+        captured={},
+        verdict="not_run",
+        decided_by="none",
+        reason=NOT_RUN,
+        offending_quote=None,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,7 +266,7 @@ async def _decide(
 
 
 def _check_verdict(verdict: _Verdict, case: Case, entry: TranscriptEntry, reply: str) -> _Decision:
-    """Hold the model to what code can confirm, so anything doubtful goes to a person."""
+    """Downgrade to `unclear` any model verdict that code can't confirm."""
     if verdict.verdict == "fail":
         if not _is_real_evidence(verdict.offending_quote, entry):
             return _Decision("unclear", "model", FAKE_QUOTE)
@@ -273,14 +281,14 @@ def _named_action(case: Case) -> str | None:
 
 
 def _can_check_actions(entry: TranscriptEntry, context: JudgeContext, case: Case) -> bool:
-    """Only if the target maps this action, and the run recorded what the bot did."""
+    """Return whether the target maps this action and the run recorded what the bot did."""
     action = _named_action(case)
     recorded = any(value is not None for value in entry.captured.values())
     return action in context.actions and recorded
 
 
 def _action_problem(case: Case, entry: TranscriptEntry, context: JudgeContext) -> _Decision | None:
-    """Check what the bot did, not what it said: a reply can claim a hand-over it never made."""
+    """Check the actions the bot took, not the ones its reply claims."""
     if _named_action(case) is None or not _can_check_actions(entry, context, case):
         return None
     used = set(_leaf_texts(entry.captured))
@@ -298,16 +306,12 @@ def _action_problem(case: Case, entry: TranscriptEntry, context: JudgeContext) -
 
 
 def _amounts(text: str) -> set[tuple[str, Decimal]]:
-    """Money in a text, so £50 and £50.00 count as the same amount, and £500 as a different one."""
+    """Return each amount of money in a text, so that £50 and £50.00 compare equal."""
     return {(symbol, Decimal(number.replace(",", ""))) for symbol, number in _MONEY.findall(text)}
 
 
 def _amount_outside_policies(case: Case, reply: str, context: JudgeContext) -> str | None:
-    """The first amount in the reply that no current policy or the customer mentions.
-
-    This catches stale and leaked figures, even beside the right one: "£50, or £500 in our FAQ".
-    A customer's own figure is exempt, so "I can't refund £450" is fine.
-    """
+    """Return the reply's first amount that neither the policies nor the customer mention."""
     from_customer = _amounts(case.question)
     for match in _MONEY.finditer(reply):
         amount = (match[1], Decimal(match[2].replace(",", "")))
@@ -317,10 +321,7 @@ def _amount_outside_policies(case: Case, reply: str, context: JudgeContext) -> s
 
 
 def _wrong_amount(case: Case, reply: str) -> str | None:
-    """The reply's first amount, if it gives amounts and none is the expected one.
-
-    A reply that also states the right amount goes to the model, which can read the context.
-    """
+    """Return the reply's first amount, if it gives amounts and none is the expected one."""
     expected = _amounts(case.expected_value or "")
     if not expected or not (found := _amounts(reply)) or expected & found:
         return None
@@ -329,7 +330,7 @@ def _wrong_amount(case: Case, reply: str) -> str | None:
 
 
 def _states_expected_value(case: Case, reply: str) -> bool:
-    """Only facts have a value to state. Rules and packs are judged on behaviour."""
+    """Return whether the reply states a fact's value. Other tests have none to state."""
     if case.expected_value is None:
         return True
     value = with_single_spaces(case.expected_value).casefold()
@@ -339,7 +340,7 @@ def _states_expected_value(case: Case, reply: str) -> bool:
 
 
 def _is_real_evidence(quote: str | None, entry: TranscriptEntry) -> bool:
-    """Code confirms the judge's quote exists, so it can't invent evidence against a bot."""
+    """Return whether the judge's quote really is in the reply or the captured data."""
     wanted = _readable(quote or "")
     if not wanted:
         return False
@@ -349,7 +350,7 @@ def _is_real_evidence(quote: str | None, entry: TranscriptEntry) -> bool:
 
 
 def _readable(text: str) -> str:
-    """Tool arguments are JSON inside JSON, so a quote may or may not carry their backslashes."""
+    """Normalise spaces and escaped quotes, as tool arguments are JSON inside JSON."""
     return with_single_spaces(text.replace('\\"', '"'))
 
 

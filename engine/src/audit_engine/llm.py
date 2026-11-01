@@ -1,4 +1,4 @@
-"""The boundary with the language model. Switching provider or SDK means changing only this file."""
+"""The client for OpenAI-compatible model APIs."""
 
 from typing import Annotated, Protocol
 
@@ -35,7 +35,7 @@ class _ProviderChoice(BaseModel):
 
 
 class _ProviderCompletion(BaseModel):
-    """The parts of a provider's reply the engine relies on. The SDK itself doesn't enforce them."""
+    """The parts of a provider's reply the engine relies on."""
 
     choices: list[_ProviderChoice] = Field(min_length=1)
 
@@ -81,7 +81,7 @@ class OpenAICompatibleClient:
 
 
 def without_code_fence(reply: str) -> str:
-    """Models sometimes wrap JSON in a Markdown code block, despite being asked not to."""
+    """Remove any Markdown code block around a model's JSON."""
     text = reply.strip()
     if text.startswith("```") and text.endswith("```"):
         return text.partition("\n")[2].removesuffix("```")

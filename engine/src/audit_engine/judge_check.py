@@ -1,8 +1,4 @@
-"""Checks the judge against answers whose right verdict is already known.
-
-This shows whether a change to the judge helped or harmed. It isn't a measure of accuracy: the
-same person chose the answers and their right verdicts, and there are few of them.
-"""
+"""Compares the judge with known answers. This tracks changes, and doesn't measure accuracy."""
 
 from collections import Counter
 from collections.abc import Callable
@@ -74,8 +70,29 @@ async def check_judge(
     record: Callable[[JudgedAnswer], None] = lambda _: None,
 ) -> JudgeCheck:
     """Judge every known answer `rounds` times, and compare the verdicts with the right ones."""
+    entries = _as_entries(known, rounds)
+    verdicts: dict[str, Counter[Verdict]] = {answer.case.id: Counter() for answer in known.answers}
+
+    def save(result: JudgedAnswer) -> None:
+        verdicts[result.case.id][result.verdict] += 1
+        record(result)
+
+    await judge_transcript(
+        CaseFile(tests=[answer.case for answer in known.answers]), entries, llm, save, context
+    )
+    wrong = _unacceptable(known, verdicts)
+    return JudgeCheck(
+        verdicts=verdicts,
+        wrong=wrong,
+        total=len(entries),
+        false_passes=sum(counts["pass"] for counts in wrong.values()),
+        false_fails=sum(counts["fail"] for counts in wrong.values()),
+    )
+
+
+def _as_entries(known: KnownAnswers, rounds: int) -> list[TranscriptEntry]:
     at = datetime.now(UTC)
-    entries = [
+    return [
         TranscriptEntry(
             case_id=answer.case.id,
             attempt=attempt,
@@ -89,15 +106,11 @@ async def check_judge(
         for attempt in range(1, rounds + 1)
         for answer in known.answers
     ]
-    verdicts: dict[str, Counter[Verdict]] = {answer.case.id: Counter() for answer in known.answers}
 
-    def save(result: JudgedAnswer) -> None:
-        verdicts[result.case.id][result.verdict] += 1
-        record(result)
 
-    await judge_transcript(
-        CaseFile(tests=[answer.case for answer in known.answers]), entries, llm, save, context
-    )
+def _unacceptable(
+    known: KnownAnswers, verdicts: dict[str, Counter[Verdict]]
+) -> dict[str, Counter[Verdict]]:
     wrong: dict[str, Counter[Verdict]] = {}
     for answer in known.answers:
         unacceptable = Counter(
@@ -105,10 +118,4 @@ async def check_judge(
         )
         if unacceptable:
             wrong[answer.case.id] = unacceptable
-    return JudgeCheck(
-        verdicts=verdicts,
-        wrong=wrong,
-        total=len(entries),
-        false_passes=sum(counts["pass"] for counts in wrong.values()),
-        false_fails=sum(counts["fail"] for counts in wrong.values()),
-    )
+    return wrong

@@ -8,9 +8,9 @@ from dataclasses import dataclass
 from typing import Any, Self
 
 import httpx2
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from audit_engine.config import is_this_computer
+from audit_engine.fields import HEADER_SAFE, EncryptedUrl
 from audit_engine.yaml_files import YamlFileError, load_model
 
 MAX_TARGET_CHARS = 100_000
@@ -18,7 +18,6 @@ MAX_RESPONSE_BYTES = 1_000_000
 QUESTION_PLACEHOLDER = "{{question}}"
 
 _PATH = r"^[^.\s]+(\.[^.\s]+)*$"
-_HEADER_SAFE_TOKEN = re.compile(r"[!-~]+")
 _SUCCESS = range(200, 300)
 
 
@@ -29,7 +28,7 @@ class TargetError(YamlFileError):
 class Target(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    url: HttpUrl
+    url: EncryptedUrl
     request: dict[str, Any]
     reply_path: str = Field(pattern=_PATH)
     capture: dict[str, str] = Field(default_factory=dict)
@@ -37,13 +36,6 @@ class Target(BaseModel):
     actions: dict[str, str] = Field(default_factory=dict)
     token_env: str | None = Field(default=None, pattern=r"^[A-Z_][A-Z0-9_]*$")
     timeout_seconds: float = Field(default=60.0, gt=0, le=600)
-
-    @field_validator("url")
-    @classmethod
-    def _check_url_is_encrypted(cls, value: HttpUrl) -> HttpUrl:
-        if value.scheme != "https" and not is_this_computer((value.host or "").strip("[]")):
-            raise ValueError("must use https unless it points at this computer.")
-        return value
 
     @field_validator("capture")
     @classmethod
@@ -75,13 +67,13 @@ def parse_target(text: str) -> Target:
 
 
 def read_token(target: Target, environment: Mapping[str, str]) -> str | None:
-    """Fetch the token named by the target. The file only ever holds the variable's name."""
+    """Fetch the token from the variable the target names."""
     if target.token_env is None:
         return None
     token = environment.get(target.token_env)
     if not token:
         raise TargetError(f"The environment variable {target.token_env} is not set.")
-    if not _HEADER_SAFE_TOKEN.fullmatch(token):
+    if not HEADER_SAFE.fullmatch(token):
         raise TargetError(
             f"{target.token_env} must contain only printable ASCII characters, with no spaces."
         )
@@ -117,7 +109,7 @@ class TargetClient:
         await self._client.aclose()
 
     async def _post(self, question: str) -> tuple[int, bytes | None]:
-        """Read the response up to the limit, in pieces, so a huge one can't exhaust memory."""
+        """Read the response in pieces, up to the size limit."""
         payload = _fill(self._target.request, question)
         async with self._client.stream(
             "POST", self._url, json=payload, headers=self._headers
@@ -156,7 +148,7 @@ def _refuse_constant(name: str) -> None:
 
 
 def _fill(template: object, question: str) -> Any:
-    """Put the question in place as data, so its wording can't change the request's shape."""
+    """Put the question in place as data, leaving the request's shape unchanged."""
     if isinstance(template, str):
         return template.replace(QUESTION_PLACEHOLDER, question)
     if isinstance(template, dict):

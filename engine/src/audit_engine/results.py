@@ -19,11 +19,7 @@ class ResultsError(YamlFileError):
 
 
 class JudgedAnswer(BaseModel):
-    """One verdict, holding everything a report needs to show it.
-
-    `error` means the bot gave no usable reply, so there was nothing to judge. `not_run` means
-    a test has no answer at all. Neither counts as a pass, or is hidden.
-    """
+    """One verdict and what a report needs to show it. `error` and `not_run` aren't passes."""
 
     model_config = ConfigDict(extra="forbid")
 

@@ -130,7 +130,7 @@ def _to_example(answer: JudgedAnswer) -> Example:
 
 
 def _actions(answer: JudgedAnswer) -> dict[str, Any]:
-    """What the bot did, rather than said: the captured fields that name tools or actions."""
+    """Return the captured fields that name tools or actions."""
     return {
         name: value
         for name, value in answer.captured.items()
@@ -139,7 +139,7 @@ def _actions(answer: JudgedAnswer) -> dict[str, Any]:
 
 
 def _severity(case: Case, fails: list[JudgedAnswer]) -> Severity:
-    """Doing the wrong thing is worse than saying it. Then money, and the standard packs' risks."""
+    """Rank wrong actions first, then money and standard pack failures."""
     if any(_actions(answer) for answer in fails):
         return "critical"
     if case.style == "pack" or (
@@ -150,7 +150,7 @@ def _severity(case: Case, fails: list[JudgedAnswer]) -> Severity:
 
 
 def render_html(report: Report) -> str:
-    """Every value is escaped: a bot's reply is untrusted, and could contain a script."""
+    """Render the page, escaping every value because a bot's reply is untrusted."""
     environment = Environment(
         loader=PackageLoader("audit_engine", "templates"),
         autoescape=True,
