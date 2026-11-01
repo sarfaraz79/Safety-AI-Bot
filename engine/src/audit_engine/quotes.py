@@ -1,9 +1,10 @@
 """Checks that a contract item's quote really is in the document, and supports its value."""
 
 from enum import StrEnum
+from functools import lru_cache
 
 from audit_engine.contract import Item
-from audit_engine.documents import Document
+from audit_engine.documents import MAX_SECTIONS, Document
 
 MIN_QUOTE_WORDS = 2  # a lone "£50" gives the reviewer no way to see what it refers to
 
@@ -21,13 +22,13 @@ def check_item(item: Item, document: Document) -> QuoteProblem | None:
     This proves the words exist in the source, not that the statement reads them fairly:
     "refund is available" passes against "No refund is available". That is for the reviewer.
     """
-    section = next((s for s in document.sections if s.heading == item.section), None)
+    section = document.by_heading.get(item.section)
     if section is None:
         return QuoteProblem.UNKNOWN_SECTION
     quote = with_single_spaces(item.quote)
     if len(quote.split(" ")) < MIN_QUOTE_WORDS:
         return QuoteProblem.QUOTE_TOO_SHORT
-    if not contains_whole(with_single_spaces(section.text), quote):
+    if not contains_whole(_section_words(section.text), quote):
         return QuoteProblem.QUOTE_NOT_FOUND
     if item.value is not None and not contains_whole(quote, with_single_spaces(item.value)):
         return QuoteProblem.VALUE_NOT_IN_QUOTE
@@ -37,6 +38,10 @@ def check_item(item: Item, document: Document) -> QuoteProblem | None:
 def with_single_spaces(text: str) -> str:
     """Line breaks and repeated spaces are the only differences a quote may have from its source."""
     return " ".join(text.split())
+
+
+# A document's sections are checked again for every item, so remember their cleaned-up text.
+_section_words = lru_cache(maxsize=MAX_SECTIONS)(with_single_spaces)
 
 
 def contains_whole(text: str, part: str) -> bool:

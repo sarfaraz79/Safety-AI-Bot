@@ -92,7 +92,8 @@ def write_atomically(path: Path, text: str) -> None:
 
 def open_for_this_user(path: Path) -> TextIO:
     """For files written as results arrive. They can hold confidential answers."""
-    descriptor = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+    # O_NOFOLLOW: a link planted at this path can't redirect results onto another file.
+    descriptor = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
     return os.fdopen(descriptor, "w", encoding="utf-8")
 
 

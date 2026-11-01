@@ -7,6 +7,9 @@ from pydantic import ValidationError
 
 from demo_bot.api import create_app
 from demo_bot.config import Settings
+from demo_bot.security import MAX_HEADER_BYTES
+
+MAX_CONNECTIONS = 1_000
 
 
 def main() -> None:
@@ -16,7 +19,15 @@ def main() -> None:
         raise SystemExit(f"Invalid configuration:\n{describe_settings_errors(exc)}") from None
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    uvicorn.run(create_app(settings), host=settings.host, port=settings.port, server_header=False)
+    uvicorn.run(
+        create_app(settings),
+        host=settings.host,
+        port=settings.port,
+        server_header=False,
+        http="h11",  # the HTTP parser that enforces the header limit below
+        h11_max_incomplete_event_size=MAX_HEADER_BYTES,
+        limit_concurrency=MAX_CONNECTIONS,
+    )
 
 
 def describe_settings_errors(exc: ValidationError) -> str:

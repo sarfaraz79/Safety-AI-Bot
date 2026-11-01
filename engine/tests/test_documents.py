@@ -364,3 +364,15 @@ def test_crafted_files_cannot_slow_reading_down(raw: bytes) -> None:
         parse_document("policy.md", raw)
 
     assert time.monotonic() - started < 10  # generous for slow CI; the failures this catches hang
+
+
+def test_sections_can_be_looked_up_by_heading() -> None:
+    document = parse_document("policy.md", b"## A\none\n## A\ntwo\n## B\nthree")
+
+    assert document.by_heading["A (2)"] == Section("A (2)", "two")
+    assert list(document.by_heading) == ["A", "A (2)", "B"]
+    assert "Missing" not in document.by_heading
+
+
+def test_a_lookup_table_does_not_affect_whether_documents_are_equal() -> None:
+    assert parse_document("p.md", b"## A\ntext") == parse_document("p.md", b"## A\ntext")

@@ -2,7 +2,8 @@
 
 import hashlib
 import re
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 
 from pydantic import ValidationError
 
@@ -36,6 +37,11 @@ class Section:
 class Document:
     source: Source
     sections: tuple[Section, ...]
+    by_heading: Mapping[str, Section] = field(init=False, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        by_heading = {section.heading: section for section in self.sections}
+        object.__setattr__(self, "by_heading", by_heading)
 
 
 def parse_document(name: str, raw: bytes) -> Document:
@@ -129,6 +135,7 @@ def _ends_with_one_line_paragraph(body: list[str]) -> bool:
 def _to_sections(parts: list[tuple[str, list[str]]]) -> tuple[Section, ...]:
     sections: list[Section] = []
     used: set[str] = set()
+    next_number: dict[str, int] = {}
     for heading, body in parts:
         text = "\n".join(body).strip()
         if not text:
@@ -144,17 +151,21 @@ def _to_sections(parts: list[tuple[str, list[str]]]) -> tuple[Section, ...]:
                 f"The heading of section {len(sections) + 1} is longer than "
                 f"{MAX_HEADING_CHARS} characters."
             )
-        unique = _unique_heading(heading, used)
+        unique = _unique_heading(heading, used, next_number)
         used.add(unique)
         sections.append(Section(heading=unique, text=text))
     return tuple(sections)
 
 
-def _unique_heading(heading: str, used: set[str]) -> str:
-    """Number repeated headings, so `section` in a contract points to exactly one place."""
+def _unique_heading(heading: str, used: set[str], next_number: dict[str, int]) -> str:
+    """Number repeated headings, so `section` in a contract points to exactly one place.
+
+    `next_number` remembers where each heading got to, so numbering never has to start again.
+    """
     candidate = heading
-    number = 1
+    number = next_number.get(heading, 1)
     while candidate in used:
         number += 1
         candidate = f"{heading} ({number})"
+    next_number[heading] = number
     return candidate

@@ -10,6 +10,7 @@ from audit_engine.commands import common
 from audit_engine.commands.extract import read_policy
 from audit_engine.commands.run import read_target, read_tests
 from audit_engine.judge import (
+    MAX_JUDGE_CONCURRENCY,
     JudgeContext,
     JudgeError,
     JudgeSummary,
@@ -43,6 +44,9 @@ def judge_command(
     model: Annotated[
         str | None, typer.Option("--model", help="Judge with this model instead of the default.")
     ] = None,
+    concurrency: Annotated[
+        int, typer.Option(min=1, max=MAX_JUDGE_CONCURRENCY, help="Most answers judged at once.")
+    ] = 1,
     force: Annotated[bool, typer.Option("--force", help="Replace existing results.")] = False,
 ) -> None:
     """Decide whether each answer was right, using automatic checks and then a model."""
@@ -53,6 +57,7 @@ def judge_command(
     context = JudgeContext(
         policies=tuple(read_policy(path) for path in policies),
         actions=read_target(target_path).actions if target_path else {},
+        concurrency=concurrency,
     )
     try:
         check_policies(cases, context)

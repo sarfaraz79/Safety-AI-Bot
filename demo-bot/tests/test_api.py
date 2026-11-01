@@ -11,6 +11,7 @@ from demo_bot.api import MAX_BODY_BYTES, create_app
 from demo_bot.config import Settings
 from demo_bot.llm import LLMError, LLMResponse, Message, ToolSpec, UserMessage
 from demo_bot.schemas import MAX_CONVERSATION_CHARS, MAX_MESSAGE_CHARS, MAX_MESSAGES
+from demo_bot.security import MAX_HEADER_BYTES
 from demo_bot.testing import ScriptedLLM, call_tool, reply
 
 ClientFactory = Callable[..., TestClient]
@@ -413,3 +414,130 @@ async def test_simultaneous_chats_never_see_each_other(
         )
 
     assert [response.json()["reply"] for response in responses] == questions
+
+
+# Limits protect the owner's model credits, and keep one slow model call from holding things up.
+
+
+def test_too_many_chats_get_a_429_before_the_model_is_called(make_client: ClientFactory) -> None:
+    llm = ScriptedLLM(reply("Hi"), reply("Hi"))
+    client = make_client(llm, chats_per_minute=2)
+
+    statuses = [client.post("/chat", json=QUESTION).status_code for _ in range(3)]
+
+    assert statuses == [200, 200, 429]
+    assert len(llm.requests) == 2
+
+
+def test_a_429_says_when_to_try_again(make_client: ClientFactory) -> None:
+    client = make_client(ScriptedLLM(reply("Hi")), chats_per_minute=1)
+    client.post("/chat", json=QUESTION)
+
+    assert client.post("/chat", json=QUESTION).headers["retry-after"] == "5"
+
+
+def test_requests_refused_by_access_checks_do_not_use_up_the_rate_limit(
+    make_client: ClientFactory,
+) -> None:
+    client = make_client(ScriptedLLM(reply("Hi")), auth_token=TOKEN, chats_per_minute=1)
+
+    assert client.post("/chat", json=QUESTION).status_code == 401
+    good = client.post("/chat", json=QUESTION, headers={"authorization": f"Bearer {TOKEN}"})
+
+    assert good.status_code == 200
+
+
+class HangingLLM:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def complete(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> LLMResponse:
+        assert messages
+        assert tools
+        self.started.set()
+        await self.release.wait()
+        return reply("Done.")
+
+    async def aclose(self) -> None:
+        return None
+
+
+@pytest.mark.anyio
+async def test_a_chat_over_the_time_limit_gets_a_504(
+    make_settings: Callable[..., Settings],
+) -> None:
+    app = create_app(make_settings(chat_timeout_seconds=0.01), llm=HangingLLM())
+    transport = httpx2.ASGITransport(app, client=("127.0.0.1", 50000))
+
+    async with httpx2.AsyncClient(transport=transport, base_url="http://127.0.0.1") as client:
+        response = await client.post("/chat", json=QUESTION)
+
+    assert response.status_code == 504
+    assert response.json() == {"detail": "The request took too long. Try again later."}
+
+
+@pytest.mark.anyio
+async def test_a_chat_over_the_concurrency_limit_gets_a_503_and_recovers(
+    make_settings: Callable[..., Settings],
+) -> None:
+    llm = HangingLLM()
+    app = create_app(make_settings(max_concurrent_chats=1), llm=llm)
+    transport = httpx2.ASGITransport(app, client=("127.0.0.1", 50000))
+
+    async with httpx2.AsyncClient(transport=transport, base_url="http://127.0.0.1") as client:
+        first = asyncio.create_task(client.post("/chat", json=QUESTION))
+        await llm.started.wait()
+        busy = await client.post("/chat", json=QUESTION)
+        llm.release.set()
+        done = await first
+        again = await client.post("/chat", json=QUESTION)
+
+    assert busy.status_code == 503
+    assert busy.headers["retry-after"] == "5"
+    assert done.status_code == 200
+    assert again.status_code == 200
+
+
+def test_a_chat_slot_is_freed_after_a_model_failure(make_client: ClientFactory) -> None:
+    llm = ScriptedLLM(LLMError("RateLimitError"), reply("Hi"))
+    client = make_client(llm, max_concurrent_chats=1)
+
+    assert client.post("/chat", json=QUESTION).status_code == 502
+    assert client.post("/chat", json=QUESTION).status_code == 200
+
+
+@pytest.mark.parametrize("path", ["/docs", "/openapi.json", "/health"])
+def test_every_response_carries_security_headers(make_client: ClientFactory, path: str) -> None:
+    headers = make_client(ScriptedLLM()).get(path).headers
+
+    assert headers["x-content-type-options"] == "nosniff"
+    assert headers["x-frame-options"] == "DENY"
+    assert headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize("path", ["/docs", "/openapi.json"])
+def test_an_exposed_bot_does_not_publish_a_map_of_itself(
+    make_client: ClientFactory, path: str
+) -> None:
+    client = make_client(ScriptedLLM(), auth_token=TOKEN)
+
+    assert client.get(path).status_code == 404
+
+
+def test_huge_headers_are_refused_on_every_route(make_client: ClientFactory) -> None:
+    llm = ScriptedLLM()
+    client = make_client(llm)
+    huge = {"x-big": "a" * (MAX_HEADER_BYTES + 1)}
+
+    assert client.get("/health", headers=huge).status_code == 431
+    assert client.post("/chat", json=QUESTION, headers=huge).status_code == 431
+    assert llm.requests == []
+
+
+def test_headers_just_under_the_limit_are_accepted(make_client: ClientFactory) -> None:
+    client = make_client(ScriptedLLM())
+
+    assert (
+        client.get("/health", headers={"x-big": "a" * (MAX_HEADER_BYTES // 2)}).status_code == 200
+    )

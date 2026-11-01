@@ -33,6 +33,9 @@ class Settings(BaseSettings):
 
     prompt_version: PromptVersion = "v1"
     retrieval_top_k: int = Field(default=2, ge=1, le=10)
+    chat_timeout_seconds: float = Field(default=120.0, gt=0, le=600)
+    max_concurrent_chats: int = Field(default=50, ge=1, le=1_000)
+    chats_per_minute: int = Field(default=600, ge=1, le=100_000)
 
     host: str = Field(default="127.0.0.1", min_length=1)
     port: int = Field(default=8000, ge=1, le=65_535)
