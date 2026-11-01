@@ -8,9 +8,9 @@ from typer.testing import CliRunner
 
 from audit_engine import cli
 from audit_engine.commands import common
-from audit_engine.commands.judge_accuracy import _describe
+from audit_engine.commands.judge_accuracy import _MAX_SHEET_CHARS, _describe
 from audit_engine.judge_accuracy import MIN_RELIABLE_SAMPLE, wilson
-from audit_engine.results import JudgedAnswer, render_result
+from audit_engine.results import MAX_RESULTS_CHARS, JudgedAnswer, render_result
 from audit_engine.testcases import Case
 
 runner = CliRunner()
@@ -134,3 +134,7 @@ def test_a_bad_marks_file_is_refused(results: Path, tmp_path: Path) -> None:
 
 def test_a_range_is_described_in_words() -> None:
     assert _describe(wilson(50, 100)) == "50 of 100 (50.0%, likely range 40.4% to 59.6%)"
+
+
+def test_the_sheet_limit_never_asks_for_more_memory_than_a_results_file() -> None:
+    assert _MAX_SHEET_CHARS <= MAX_RESULTS_CHARS

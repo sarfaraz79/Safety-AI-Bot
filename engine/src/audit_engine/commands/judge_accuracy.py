@@ -20,7 +20,7 @@ from audit_engine.judge_accuracy import (
 )
 from audit_engine.results import MAX_RESULTS_CHARS, JudgedAnswer, ResultsError, parse_results
 
-_MAX_SHEET_CHARS = MAX_SHEET_ROWS * 100_000
+_MAX_SHEET_CHARS = 100_000_000
 
 
 def marking_sheet_command(
