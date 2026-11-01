@@ -17,6 +17,8 @@ _bearer_scheme = HTTPBearer(auto_error=False)
 
 AccessCheck = Callable[[Request, HTTPAuthorizationCredentials | None], Awaitable[None]]
 
+MAX_HEADER_BYTES = 16 * 1024
+
 _SECURITY_HEADERS = (
     (b"x-content-type-options", b"nosniff"),
     (b"x-frame-options", b"DENY"),
@@ -149,6 +151,15 @@ class BodySizeLimitMiddleware:
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
+            return
+
+        # The server's own limit only covers headers that arrive in pieces, so check them here too.
+        if sum(len(name) + len(value) for name, value in scope["headers"]) > MAX_HEADER_BYTES:
+            too_large = JSONResponse(
+                {"detail": "Request headers too large."},
+                status_code=status.HTTP_431_REQUEST_HEADER_FIELDS_TOO_LARGE,
+            )
+            await too_large(scope, receive, send)
             return
 
         chunks: list[bytes] = []

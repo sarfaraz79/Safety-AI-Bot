@@ -11,6 +11,7 @@ from demo_bot.api import MAX_BODY_BYTES, create_app
 from demo_bot.config import Settings
 from demo_bot.llm import LLMError, LLMResponse, Message, ToolSpec, UserMessage
 from demo_bot.schemas import MAX_CONVERSATION_CHARS, MAX_MESSAGE_CHARS, MAX_MESSAGES
+from demo_bot.security import MAX_HEADER_BYTES
 from demo_bot.testing import ScriptedLLM, call_tool, reply
 
 ClientFactory = Callable[..., TestClient]
@@ -522,3 +523,21 @@ def test_an_exposed_bot_does_not_publish_a_map_of_itself(
     client = make_client(ScriptedLLM(), auth_token=TOKEN)
 
     assert client.get(path).status_code == 404
+
+
+def test_huge_headers_are_refused_on_every_route(make_client: ClientFactory) -> None:
+    llm = ScriptedLLM()
+    client = make_client(llm)
+    huge = {"x-big": "a" * (MAX_HEADER_BYTES + 1)}
+
+    assert client.get("/health", headers=huge).status_code == 431
+    assert client.post("/chat", json=QUESTION, headers=huge).status_code == 431
+    assert llm.requests == []
+
+
+def test_headers_just_under_the_limit_are_accepted(make_client: ClientFactory) -> None:
+    client = make_client(ScriptedLLM())
+
+    assert (
+        client.get("/health", headers={"x-big": "a" * (MAX_HEADER_BYTES // 2)}).status_code == 200
+    )

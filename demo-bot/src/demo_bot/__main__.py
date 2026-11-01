@@ -7,8 +7,8 @@ from pydantic import ValidationError
 
 from demo_bot.api import create_app
 from demo_bot.config import Settings
+from demo_bot.security import MAX_HEADER_BYTES
 
-MAX_HEADER_BYTES = 16 * 1024
 MAX_CONNECTIONS = 1_000
 
 

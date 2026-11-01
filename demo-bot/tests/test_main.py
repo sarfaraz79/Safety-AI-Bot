@@ -5,6 +5,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from demo_bot import __main__ as entry_point
+from demo_bot.security import MAX_HEADER_BYTES
 
 
 def test_starts_uvicorn_with_the_configured_address(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -23,7 +24,7 @@ def test_starts_uvicorn_with_the_configured_address(monkeypatch: pytest.MonkeyPa
         "port": 8123,
         "server_header": False,
         "http": "h11",
-        "h11_max_incomplete_event_size": entry_point.MAX_HEADER_BYTES,
+        "h11_max_incomplete_event_size": MAX_HEADER_BYTES,
         "limit_concurrency": entry_point.MAX_CONNECTIONS,
     }
 
