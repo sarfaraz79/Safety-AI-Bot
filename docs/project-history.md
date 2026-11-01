@@ -11,7 +11,7 @@ This is kept up to date with every change. The technical reasons behind decision
 - **Not proven:** how accurate the AI judge is. Nobody independent has measured it, so every finding must be checked by hand.
 - **Not done:** no real company has seen or paid for this, and there has been no outside security test.
 - **Next:** talk to UK companies with live chatbots, and try to sell a first audit.
-- **Waiting on the founder:** merge pull requests 19 and 20.
+- **Waiting on the founder:** merge pull request 20.
 
 ## What the product does
 
@@ -86,7 +86,7 @@ Each row is one pull request, the reviewed unit of change. "Merged" means it's i
 
 | # | What changed, in simple words | Status |
 |---|---|---|
-| 19 | Made search, checks and judging about 7 to 65 times faster on the code's own work, with results unchanged. Added limits on request rate, chats at once, time and header size, plus security headers. Wrote up the architecture and the security model, including remaining gaps | Waiting to merge |
+| 19 | Made search, checks and judging about 7 to 65 times faster on the code's own work, with results unchanged. Added limits on request rate, chats at once, time and header size, plus security headers. Wrote up the architecture and the security model, including remaining gaps | Merged |
 | 20 | Added this project history and its PDF | Waiting to merge |
 
 ## Decisions the founder has made
