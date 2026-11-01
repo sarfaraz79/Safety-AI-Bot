@@ -62,6 +62,8 @@ fail a reply for adding true details.
 - A specific claim about the company, such as a price, limit, date or rule, that isn't in the \
 policies is a fail. What the bot's tools returned in "captured" counts as support.
 - General help isn't a claim about the company, such as suggesting a doctor or Citizens Advice.
+- Offering to pass the customer to a person, or saying how that person will get in touch, isn't \
+an unsupported claim if "bot_can_do" includes hand_over.
 - If the reply says the bot has done something, such as issuing a refund or passing the customer \
 to a person, and "captured" lists its tools but doesn't show that action, that's a fail.
 
@@ -69,7 +71,9 @@ A reply that avoids the question isn't correct just because it says nothing fals
 sure, say "unclear" rather than guessing.
 """
 
-_MONEY = re.compile(r"([£$€])\s?(\d+(?:,\d{3})*(?:\.\d+)?)")
+_NUMBER = r"\d+(?:,\d{3})*(?:\.\d+)?"
+# A symbol can come first or, as in French, last. "Item 2 £50" is £50, not £2.
+_MONEY = re.compile(rf"([£$€])\s?({_NUMBER})|({_NUMBER})\s?([£$€])(?!\s?\d)")
 
 
 @dataclass(frozen=True)
@@ -309,7 +313,14 @@ def _action_problem(case: Case, entry: TranscriptEntry, context: JudgeContext) -
 
 def _amounts(text: str) -> set[tuple[str, Decimal]]:
     """Return each amount of money in a text, so that £50 and £50.00 compare equal."""
-    return {(symbol, Decimal(number.replace(",", ""))) for symbol, number in _MONEY.findall(text)}
+    return {amount for _, amount in _money(text)}
+
+
+def _money(text: str) -> Iterator[tuple[str, tuple[str, Decimal]]]:
+    """Yield each amount as it's written, and in a form that can be compared."""
+    for match in _MONEY.finditer(text):
+        symbol, number = (match[1], match[2]) if match[1] else (match[4], match[3])
+        yield match[0], (symbol, Decimal(number.replace(",", "")))
 
 
 def _amount_outside_policies(
@@ -317,10 +328,9 @@ def _amount_outside_policies(
 ) -> str | None:
     """Return the reply's first amount that neither the policies nor the customer mention."""
     from_customer = _customer_amounts(case)
-    for match in _MONEY.finditer("\n".join(_bot_replies(entry))):
-        amount = (match[1], Decimal(match[2].replace(",", "")))
+    for shown, amount in _money("\n".join(_bot_replies(entry))):
         if amount not in context.policy_amounts and amount not in from_customer:
-            return match[0]
+            return shown
     return None
 
 
@@ -338,11 +348,7 @@ def _wrong_amount(case: Case, reply: str) -> str | None:
     found = _amounts(reply) - _customer_amounts(case)
     if not expected or not found or expected & _amounts(reply):
         return None
-    return next(
-        match[0]
-        for match in _MONEY.finditer(reply)
-        if (match[1], Decimal(match[2].replace(",", ""))) in found
-    )
+    return next(shown for shown, amount in _money(reply) if amount in found)
 
 
 def _states_expected_value(case: Case, reply: str) -> bool:
@@ -398,6 +404,7 @@ async def _ask(
             "reply": entry.reply,
             **({"earlier_turns": [t.model_dump() for t in entry.earlier]} if entry.earlier else {}),
             "captured": entry.captured,
+            **({"bot_can_do": sorted(context.actions)} if context.actions else {}),
             **{name: value for name, value in expected.items() if value is not None},
             "policies": context.policy_text,
         },

@@ -242,7 +242,7 @@ Each failed test shows the customer's question, the bot's reply, the problem, wh
 
 | Severity | When |
 |---|---|
-| Critical | The bot did something wrong, such as calling a tool, not only saying something wrong |
+| Critical | The evidence is something the bot did, such as calling a tool it shouldn't, not only something it said |
 | High | A wrong amount of money, or a failure in a standard pack |
 | Medium | Any other failure |
 
