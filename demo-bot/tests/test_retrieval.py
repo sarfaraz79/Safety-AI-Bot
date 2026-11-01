@@ -142,3 +142,11 @@ def test_published_scores_are_unchanged_by_the_faster_index(index: BM25Index) ->
         ("refunds_faq_2023#1", 7.968),
         ("delivery#3", 2.803),
     ]
+
+
+def test_equal_scores_keep_the_order_of_the_documents() -> None:
+    chunks = [Chunk(id=f"c{number}", title="Same", text="parcel refund") for number in range(5)]
+
+    found = BM25Index(chunks).search("parcel", top_k=1)
+
+    assert [hit.chunk.id for hit in found] == ["c0"]

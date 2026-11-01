@@ -206,3 +206,16 @@ async def test_earlier_messages_reach_the_bot_and_the_transcript() -> None:
 
     assert seen == [("Question 1?", ["First?"])]
     assert entries[0].earlier == [Turn(customer="First?", bot="One")]
+
+
+async def test_answered_and_failed_are_counted_separately() -> None:
+    async def one_fails(question: str, _earlier: Sequence[str] = ()) -> Answer:
+        if "1" in question:
+            return Answer(reply=None, captured={}, status=500, error="Failed.")
+        return await echo(question)
+
+    summary = await run_cases(
+        [case(1), case(2), case(3)], one_fails, lambda _: None, RunLimits(1, 1, 100)
+    )
+
+    assert (summary.answered, summary.failed) == (2, 1)

@@ -358,8 +358,8 @@ def _states_expected_value(case: Case, reply: str) -> bool:
 def _is_real_evidence(quote: str | None, entry: TranscriptEntry) -> bool:
     """Return whether the judge's quote really is in the reply or the captured data."""
     wanted = _readable(quote or "")
-    if not wanted:
-        return False
+    if not any(character.isalnum() for character in wanted):
+        return False  # punctuation alone can be "found" in the JSON of what was captured
     captured_as_shown = json.dumps(entry.captured, ensure_ascii=False)
     texts = [*_bot_replies(entry), captured_as_shown, *_leaf_texts(entry.captured)]
     return any(contains_whole(_readable(text), wanted) for text in texts)

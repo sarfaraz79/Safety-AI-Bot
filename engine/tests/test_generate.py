@@ -428,3 +428,21 @@ async def test_the_prompt_asks_for_an_edge_case(document: Document) -> None:
     await generate(contract_for(document, fact()), document, llm)
 
     assert "just over or under a limit" in llm.requests[0][0]
+
+
+async def test_questions_with_currency_symbols_go_to_the_model_as_they_are(
+    document: Document,
+) -> None:
+    llm = ScriptedLLM(GOOD)
+
+    await generate(contract_for(document, fact()), document, llm)
+
+    assert "£50" in llm.requests[0][1]
+
+
+async def test_a_reply_exactly_at_the_size_limit_is_read(document: Document) -> None:
+    llm = ScriptedLLM(GOOD.ljust(MAX_REPLY_CHARS))
+
+    result = await generate(contract_for(document, fact()), document, llm)
+
+    assert result.failed_items == ()

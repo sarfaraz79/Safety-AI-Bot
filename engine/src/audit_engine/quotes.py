@@ -42,6 +42,8 @@ _section_words = lru_cache(maxsize=MAX_SECTIONS)(with_single_spaces)
 
 def contains_whole(text: str, part: str) -> bool:
     """Find `part` in `text`, so that "£50" doesn't match inside "£500"."""
+    if not part:
+        return False
     position = 0
     while (start := text.find(part, position)) != -1:
         end = start + len(part)

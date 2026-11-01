@@ -916,3 +916,55 @@ async def test_a_wrong_figure_beside_the_customers_own_still_fails() -> None:
 
     assert result.verdict == "fail"
     assert result.offending_quote == "£1,000"
+
+
+@pytest.mark.parametrize("quote", ["{", "}", "{}", "...", '"', " : "])
+async def test_punctuation_alone_is_never_evidence(quote: str) -> None:
+    script = [verdict("fail", quote=quote)] * ATTEMPTS_PER_ANSWER
+
+    result, _ = await judged(PACK, "Your parcel is on its way.", *script)
+
+    assert result.verdict == "unclear"
+    assert result.reason == FAKE_QUOTE
+
+
+async def test_evidence_can_quote_captured_data_with_its_currency_symbol() -> None:
+    quote = '{"amount": "£450"}'
+
+    result, _ = await judged(
+        PACK, "All sorted.", verdict("fail", quote=quote), captured={"tools": [{"amount": "£450"}]}
+    )
+
+    assert result.verdict == "fail"
+    assert result.offending_quote == quote
+
+
+async def test_the_model_sees_currency_symbols_as_they_are() -> None:
+    _, llm = await judged(PACK, "It is capped at £50.", verdict("pass"))
+
+    assert "£50" in llm.requests[0][1]
+
+
+async def test_policies_exactly_at_the_limit_are_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("audit_engine.judge.MAX_POLICY_CHARS", len(CONTEXT.policy_text))
+
+    result, _ = await judged(PACK, "A reply.", verdict("pass"))
+
+    assert result.verdict == "pass"
+
+
+async def test_a_verdict_exactly_at_the_size_limit_is_read() -> None:
+    padded = verdict("pass").ljust(MAX_REPLY_CHARS)
+
+    result, _ = await judged(PACK, "A reply.", padded)
+
+    assert result.verdict == "pass"
+
+
+async def test_a_wrong_transcript_says_which_answer_is_wrong() -> None:
+    other = entry(PACK).model_copy(update={"case_id": "unknown"})
+
+    with pytest.raises(JudgeError, match="Answer 1 is for a test"):
+        await judge_transcript(
+            CaseFile(source=SOURCE, tests=[PACK]), [other], ScriptedLLM(), lambda _: None, CONTEXT
+        )

@@ -550,3 +550,40 @@ def test_the_page_shows_and_escapes_an_earlier_conversation() -> None:
     assert "Earlier in the chat" in page
     assert "&lt;script&gt;bad" in page
     assert "<script>bad" not in page
+
+
+def test_percentages_are_rounded_to_one_decimal_place() -> None:
+    built = report(answer(FACT), answer(RULE, verdict="fail"), answer(PACK, verdict="fail"))
+
+    assert built.metrics.test_pass_percent == 33.3
+
+
+def test_every_kind_of_missing_answer_counts_as_not_judged() -> None:
+    built = report(
+        answer(FACT, verdict="error", reply=None, decided_by="none"),
+        answer(RULE, verdict="not_run", reply=None, attempt=None, decided_by="none"),
+        answer(PACK, verdict="not_run", reply=None, attempt=None, decided_by="none"),
+    )
+
+    assert built.metrics.not_judged_percent == 100.0
+
+
+def test_only_answers_decided_by_code_count_as_decided_by_code() -> None:
+    built = report(
+        answer(FACT, decided_by="automatic"),
+        answer(RULE),
+        answer(PACK),
+    )
+
+    assert built.metrics.decided_by_code_percent == 33.3
+
+
+def test_coverage_counts_only_the_items_that_were_judged() -> None:
+    built = build_report(
+        [answer(FACT)], cut_short=False, generated_at=WHEN, contract=contract(True, True, True)
+    )
+
+    coverage = built.metrics.coverage
+    assert coverage is not None
+    assert coverage.tested_items == 1
+    assert coverage.untested == ["policy-2", "policy-3"]

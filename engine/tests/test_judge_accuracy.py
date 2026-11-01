@@ -359,3 +359,33 @@ def test_there_is_no_rate_when_there_is_nothing_to_count() -> None:
     rate = wilson(0, 0)
 
     assert (rate.percent, rate.low, rate.high) == (None, None, None)
+
+
+def test_kappa_is_right_when_the_judge_and_the_person_fail_at_different_rates() -> None:
+    # 45 fail-fail, 15 fail-pass, 25 pass-fail, 15 pass-pass: observed 0.6, chance 0.54.
+    verdicts = ["fail"] * 60 + ["pass"] * 40
+    marks_list = ["fail"] * 45 + ["pass"] * 15 + ["fail"] * 25 + ["pass"] * 15
+    answers = rows(*verdicts)
+
+    accuracy = measure(answers, {item.row: m for item, m in zip(answers, marks_list, strict=True)})
+
+    assert accuracy.kappa == 0.13
+
+
+def test_a_percentage_is_rounded_to_one_decimal_place() -> None:
+    assert wilson(1, 3).percent == 33.3
+
+
+def test_a_row_id_is_read_without_its_spaces() -> None:
+    assert parse_marks("row,your_mark\n r1 ,pass\n") == {"r1": "pass"}
+
+
+def test_a_repeated_row_is_named_by_its_position() -> None:
+    with pytest.raises(MarksError, match="Row 2 repeats"):
+        parse_marks("row,your_mark\nr1,pass\nr1,fail\n")
+
+
+def test_a_sheet_exactly_at_the_limit_is_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("audit_engine.judge_accuracy.MAX_SHEET_ROWS", 2)
+
+    assert len(parse_marks("row,your_mark\nr1,pass\nr2,pass\n")) == 2

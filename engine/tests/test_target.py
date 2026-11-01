@@ -610,3 +610,19 @@ async def test_the_placeholder_is_found_wherever_it_is(request_body: dict[str, A
 def test_a_request_with_neither_placeholder_is_refused() -> None:
     with pytest.raises(ValidationError, match="conversation"):
         target(request={"messages": "nothing"})
+
+
+@pytest.mark.anyio
+async def test_a_path_one_past_the_end_of_a_list_leads_nowhere() -> None:
+    answer = await client(reply_with({"choices": ["only one"]}), reply_path="choices.1").ask(
+        "Hello?"
+    )
+
+    assert answer.error == "The response has no text at choices.1."
+
+
+@pytest.mark.anyio
+async def test_status_300_is_not_a_success() -> None:
+    answer = await client(lambda _: httpx2.Response(300, json={"reply": "Hi"})).ask("Hello?")
+
+    assert answer.error == "The bot returned HTTP 300."
