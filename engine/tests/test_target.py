@@ -413,7 +413,7 @@ async def test_a_slow_bot_times_out() -> None:
 
     answer = await client(provider, timeout_seconds=0.01).ask("Hello?")
 
-    assert answer.error == "The request timed out."
+    assert answer.error == "The request timed out after 0.01 seconds."
 
 
 class DribblingStream(httpx2.AsyncByteStream):
@@ -429,7 +429,7 @@ async def test_a_bot_that_sends_a_little_forever_still_times_out() -> None:
         lambda _: httpx2.Response(200, stream=DribblingStream()), timeout_seconds=0.05
     ).ask("Hello?")
 
-    assert answer.error == "The request timed out."
+    assert answer.error == "The request timed out after 0.05 seconds."
 
 
 @pytest.mark.anyio
@@ -458,7 +458,7 @@ async def test_a_transport_timeout_is_recorded_as_a_timeout() -> None:
 
     answer = await client(provider).ask("Hello?")
 
-    assert answer.error == "The request timed out."
+    assert answer.error == "The request timed out after 60 seconds."
 
 
 @pytest.mark.anyio
@@ -626,3 +626,225 @@ async def test_status_300_is_not_a_success() -> None:
     answer = await client(lambda _: httpx2.Response(300, json={"reply": "Hi"})).ask("Hello?")
 
     assert answer.error == "The bot returned HTTP 300."
+
+
+# Time limits.
+
+
+@pytest.mark.anyio
+async def test_each_request_carries_the_configured_limit_not_the_clients_default() -> None:
+    limits: list[dict[str, float]] = []
+
+    def provider(request: httpx2.Request) -> httpx2.Response:
+        limits.append(request.extensions["timeout"])
+        return httpx2.Response(200, json={"reply": "Hi"})
+
+    answer = await client(provider, timeout_seconds=120).ask("Hello?")
+
+    assert limits[0] == {"connect": 120, "read": 120, "write": 120, "pool": 120}
+    assert answer.timeout_seconds == 120
+
+
+def test_the_limit_defaults_to_sixty_seconds_as_documented() -> None:
+    assert target().timeout_seconds == 60.0
+
+
+async def _serve_after(delay: float) -> tuple[asyncio.Server, str]:
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.read(65_536)
+        await asyncio.sleep(delay)
+        body = b'{"reply": "Hi"}'
+        writer.write(b"HTTP/1.1 200 OK\r\ncontent-length: %d\r\n\r\n%s" % (len(body), body))
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    return server, f"http://127.0.0.1:{port}/chat"
+
+
+@pytest.mark.anyio
+async def test_a_real_client_waits_for_a_reply_within_the_limit() -> None:
+    server, url = await _serve_after(0.05)
+    bot = TargetClient(target(url=url, timeout_seconds=2), None)
+
+    answer = await bot.ask("Hello?")
+    await bot.aclose()
+    server.close()
+
+    assert answer.reply == "Hi"
+    assert answer.failed_turn is None
+
+
+@pytest.mark.anyio
+async def test_a_real_client_gives_up_at_the_limit_and_says_which_limit() -> None:
+    server, url = await _serve_after(1)
+    bot = TargetClient(target(url=url, timeout_seconds=0.1), "secret-token-value")
+
+    answer = await bot.ask("Hello?")
+    await bot.aclose()
+    server.close()
+
+    assert answer.reply is None
+    assert answer.error == "The request timed out after 0.1 seconds."
+    assert answer.failed_turn == 1
+    assert "secret-token-value" not in str(answer)
+
+
+# Evidence from a chat that stops part way.
+
+
+def refund_call() -> dict[str, Any]:
+    return {
+        "name": "issue_refund",
+        "arguments": '{"order_id": "EP-100245", "amount_gbp": 450}',
+        "output": '{"refund_reference": "RF-1"}',
+    }
+
+
+def replies_then_failure(*bodies: dict[str, Any]) -> Provider:
+    waiting = iter(bodies)
+
+    def provider(_: httpx2.Request) -> httpx2.Response:
+        body = next(waiting, None)
+        return httpx2.Response(500) if body is None else httpx2.Response(200, json=body)
+
+    return provider
+
+
+@pytest.mark.anyio
+async def test_a_refund_in_turn_two_survives_a_failure_in_turn_three() -> None:
+    provider = replies_then_failure(
+        {"reply": "Hello", "tool_calls": []},
+        {"reply": "Refunded", "tool_calls": [refund_call()]},
+    )
+
+    answer = await client(
+        provider, capture={"tool_calls": "tool_calls"}, **conversation_target()
+    ).ask("Third", ["First", "Second"])
+
+    assert answer.reply is None
+    assert answer.failed_turn == 3
+    assert answer.error == "The bot returned HTTP 500."
+    assert answer.captured["tool_calls"] == [refund_call()]
+    assert [turn.bot for turn in answer.earlier] == ["Hello", "Refunded"]
+
+
+@pytest.mark.anyio
+async def test_a_hand_over_survives_a_failure() -> None:
+    hand_over = {"name": "escalate_to_human", "output": '{"ticket_reference": "HD-1"}'}
+    provider = replies_then_failure({"reply": "Passed on", "tool_calls": [hand_over]})
+
+    answer = await client(
+        provider, capture={"tool_calls": "tool_calls"}, **conversation_target()
+    ).ask("Second", ["First"])
+
+    assert answer.captured["tool_calls"] == [hand_over]
+    assert answer.failed_turn == 2
+
+
+@pytest.mark.anyio
+async def test_a_failure_before_any_reply_leaves_nothing_to_keep() -> None:
+    answer = await client(replies_then_failure(), **conversation_target()).ask("Second", ["First"])
+
+    assert answer.failed_turn == 1
+    assert answer.earlier == ()
+    assert answer.captured == {}
+
+
+@pytest.mark.anyio
+async def test_a_completed_chat_has_no_failed_turn() -> None:
+    provider = replies_then_failure({"reply": "One"}, {"reply": "Two"})
+
+    answer = await client(provider, **conversation_target()).ask("Second", ["First"])
+
+    assert answer.reply == "Two"
+    assert answer.failed_turn is None
+
+
+# Fallback replies.
+
+FALLBACK = "Sorry, I couldn't complete that request. Please try again."
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        pytest.param(FALLBACK, id="exact"),
+        pytest.param(f"  {FALLBACK}\n", id="spaces-around"),
+        pytest.param(FALLBACK.upper(), id="case"),
+        pytest.param(FALLBACK.replace(" ", "  "), id="spaces-inside"),
+    ],
+)
+@pytest.mark.anyio
+async def test_a_listed_fallback_is_marked_and_kept(reply: str) -> None:
+    answer = await client(reply_with({"reply": reply}), no_answer_replies=[FALLBACK]).ask("Hello?")
+
+    assert answer.no_answer
+    assert answer.reply == reply
+    assert answer.failed_turn == 1
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        pytest.param(f"{FALLBACK} Our cap is £50.", id="fallback-then-a-real-answer"),
+        pytest.param("Sorry, I couldn't complete that request.", id="only-part-of-it"),
+        pytest.param("Our cap is £50.", id="a-real-answer"),
+    ],
+)
+@pytest.mark.anyio
+async def test_a_real_answer_is_never_taken_for_a_fallback(reply: str) -> None:
+    answer = await client(reply_with({"reply": reply}), no_answer_replies=[FALLBACK]).ask("Hello?")
+
+    assert not answer.no_answer
+    assert answer.failed_turn is None
+
+
+@pytest.mark.anyio
+async def test_nothing_is_a_fallback_unless_it_is_listed() -> None:
+    answer = await client(reply_with({"reply": FALLBACK})).ask("Hello?")
+
+    assert not answer.no_answer
+
+
+@pytest.mark.anyio
+async def test_a_fallback_part_way_stops_the_chat_and_keeps_what_came_before() -> None:
+    provider = replies_then_failure(
+        {"reply": "Refunded", "tool_calls": [refund_call()]},
+        {"reply": FALLBACK, "tool_calls": []},
+        {"reply": "Never asked"},
+    )
+
+    answer = await client(
+        provider,
+        capture={"tool_calls": "tool_calls"},
+        no_answer_replies=[FALLBACK],
+        **conversation_target(),
+    ).ask("Third", ["First", "Second"])
+
+    assert answer.no_answer
+    assert answer.reply == FALLBACK
+    assert answer.failed_turn == 2
+    assert answer.captured["tool_calls"] == [refund_call()]
+    assert [turn.bot for turn in answer.earlier] == ["Refunded"]
+
+
+@pytest.mark.parametrize(
+    "replies",
+    [
+        pytest.param(["  "], id="blank"),
+        pytest.param(["x" * 501], id="too-long"),
+        pytest.param(["x"] * 21, id="too-many"),
+    ],
+)
+def test_a_bad_fallback_list_is_refused(replies: list[str]) -> None:
+    with pytest.raises(ValidationError):
+        target(no_answer_replies=replies)
+
+
+def test_the_demo_target_lists_the_demo_bots_fallback() -> None:
+    text = (Path(__file__).parents[2] / "examples" / "targets" / "demo-bot.yaml").read_text("utf-8")
+    fallback = FALLBACK
+
+    assert fallback in parse_target(text).no_answer_replies

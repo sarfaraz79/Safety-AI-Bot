@@ -7,9 +7,15 @@ from typer.testing import CliRunner
 
 from audit_engine import cli
 from audit_engine.commands import common
-from audit_engine.commands.compare import EXIT_GOT_WORSE
-from audit_engine.compare import Comparison, compare_reports, render_html, render_json
-from audit_engine.contract import Source
+from audit_engine.commands.compare import EXIT_NEWLY_FAILING
+from audit_engine.compare import (
+    NOT_FINISHED,
+    NOT_SETTLED,
+    Comparison,
+    compare_reports,
+    render_html,
+    render_json,
+)
 from audit_engine.report import Report, build_report
 from audit_engine.results import JudgedAnswer, render_result
 from audit_engine.testcases import Case
@@ -48,53 +54,90 @@ def compare(before: list[JudgedAnswer], after: list[JudgedAnswer]) -> Comparison
     return compare_reports(report(*before), report(*after), generated_at=WHEN)
 
 
+def test_pass_to_fail_is_a_confirmed_regression() -> None:
+    result = compare([answer()], [answer(verdict="fail")])
+
+    assert [change.case_id for change in result.newly_failing] == ["t1"]
+    assert result.not_comparable == []
+
+
+def test_fail_to_pass_is_a_confirmed_improvement() -> None:
+    result = compare([answer(verdict="fail")], [answer()])
+
+    assert [change.case_id for change in result.newly_passing] == ["t1"]
+    assert result.newly_failing == []
+
+
 @pytest.mark.parametrize(
-    ("was", "now"),
+    ("was", "now", "why"),
     [
-        ("pass", "fail"),
-        ("pass", "unclear"),
-        ("pass", "error"),
-        ("unclear", "fail"),
-        ("error", "fail"),
+        pytest.param("pass", "error", NOT_FINISHED, id="pass-to-incomplete"),
+        pytest.param("error", "fail", NOT_FINISHED, id="incomplete-to-fail"),
+        pytest.param("fail", "not_run", NOT_FINISHED, id="fail-to-not-run"),
+        pytest.param("error", "pass", NOT_FINISHED, id="incomplete-to-pass"),
+        pytest.param("error", "error", NOT_FINISHED, id="incomplete-in-both"),
+        pytest.param("unclear", "error", NOT_FINISHED, id="unclear-to-incomplete"),
+        pytest.param("pass", "unclear", NOT_SETTLED, id="pass-to-unclear"),
+        pytest.param("unclear", "pass", NOT_SETTLED, id="unclear-is-not-a-pass"),
+        pytest.param("unclear", "fail", NOT_SETTLED, id="unclear-to-fail"),
+        pytest.param("fail", "unclear", NOT_SETTLED, id="fail-to-unclear"),
+        pytest.param("unclear", "unclear", NOT_SETTLED, id="unclear-in-both"),
     ],
 )
-def test_a_worse_result_is_reported_as_worse(was: str, now: str) -> None:
+def test_a_result_that_isnt_settled_cant_be_compared(was: str, now: str, why: str) -> None:
     result = compare([answer(verdict=was)], [answer(verdict=now)])
 
-    assert [change.case_id for change in result.got_worse] == ["t1"]
-    assert result.got_better == []
+    assert (result.newly_failing, result.newly_passing, result.still_failing) == ([], [], [])
+    assert result.still_passing == 0
+    assert [change.why_not_comparable for change in result.not_comparable] == [why]
 
 
-@pytest.mark.parametrize(("was", "now"), [("fail", "pass"), ("fail", "unclear"), ("error", "pass")])
-def test_a_better_result_is_reported_as_better(was: str, now: str) -> None:
-    result = compare([answer(verdict=was)], [answer(verdict=now)])
+def test_a_judge_with_no_usable_reply_counts_as_incomplete_not_unclear() -> None:
+    result = compare([answer()], [answer(verdict="unclear", decided_by="none")])
 
-    assert [change.case_id for change in result.got_better] == ["t1"]
-    assert result.got_worse == []
+    assert result.not_comparable[0].after == "incomplete"
+    assert result.not_comparable[0].why_not_comparable == NOT_FINISHED
 
 
-def test_a_test_failing_in_both_runs_is_still_failing_not_unchanged() -> None:
+def test_a_test_failing_in_both_runs_is_still_failing() -> None:
     result = compare([answer(verdict="fail")], [answer(verdict="fail")])
 
     assert [change.case_id for change in result.still_failing] == ["t1"]
-    assert result.unchanged == 0
+    assert result.still_passing == 0
 
 
-def test_a_test_passing_in_both_runs_is_unchanged() -> None:
+def test_a_test_passing_in_both_runs_is_still_passing() -> None:
     result = compare([answer()], [answer()])
 
-    assert result.unchanged == 1
-    assert (result.got_worse, result.got_better, result.still_failing) == ([], [], [])
+    assert result.still_passing == 1
+    assert (result.newly_failing, result.newly_passing, result.still_failing) == ([], [], [])
 
 
-def test_unclear_and_not_judged_count_as_equally_doubtful() -> None:
-    assert compare([answer(verdict="unclear")], [answer(verdict="error")]).unchanged == 1
+def test_a_failure_beside_an_incomplete_repeat_still_counts_as_a_failure() -> None:
+    result = compare(
+        [answer(attempt=1), answer(attempt=2)],
+        [answer(attempt=1, verdict="fail"), answer(attempt=2, verdict="error")],
+    )
+
+    assert [change.after for change in result.newly_failing] == ["fail"]
+    assert result.completion_before == 100.0
+    assert result.completion_after == 0.0
+
+
+def test_a_pass_beside_an_incomplete_repeat_isnt_a_pass() -> None:
+    result = compare(
+        [answer(attempt=1, verdict="fail")],
+        [answer(attempt=1), answer(attempt=2, verdict="error")],
+    )
+
+    assert result.newly_passing == []
+    assert result.not_comparable[0].after == "incomplete"
 
 
 def test_a_change_carries_the_evidence() -> None:
-    [change] = compare([answer()], [answer(verdict="fail", reply="Bad reply")]).got_worse
+    [change] = compare([answer()], [answer(verdict="fail", reply="Bad reply")]).newly_failing
 
-    assert (change.before, change.after) == ("passed", "failed")
+    assert (change.before, change.after) == ("pass", "fail")
     assert change.reply == "Bad reply"
     assert change.reason == "Because."
     assert change.severity == "high"
@@ -103,18 +146,16 @@ def test_a_change_carries_the_evidence() -> None:
 def test_new_and_removed_tests_are_listed_separately() -> None:
     result = compare([answer("old")], [answer("new", verdict="fail")])
 
-    assert [(c.case_id, c.before, c.after) for c in result.new_tests] == [("new", None, "failed")]
-    assert [(c.case_id, c.before, c.after) for c in result.removed_tests] == [
-        ("old", "passed", None)
-    ]
-    assert result.got_worse == []
+    assert [(c.case_id, c.before, c.after) for c in result.new_tests] == [("new", None, "fail")]
+    assert [(c.case_id, c.before, c.after) for c in result.removed_tests] == [("old", "pass", None)]
+    assert result.newly_failing == []
 
 
 def test_a_test_whose_question_changed_cant_be_compared() -> None:
     result = compare([answer(question="Old?")], [answer(verdict="fail", question="New?")])
 
     assert result.reworded_tests == ["t1"]
-    assert result.got_worse == []
+    assert result.newly_failing == []
 
 
 def test_results_are_in_a_stable_order() -> None:
@@ -123,7 +164,7 @@ def test_results_are_in_a_stable_order() -> None:
         [answer("c", "fail"), answer("a", "fail"), answer("b", "fail")],
     )
 
-    assert [change.case_id for change in result.got_worse] == ["a", "b", "c"]
+    assert [change.case_id for change in result.newly_failing] == ["a", "b", "c"]
 
 
 def test_a_changed_policy_is_flagged() -> None:
@@ -132,13 +173,17 @@ def test_a_changed_policy_is_flagged() -> None:
 
     assert compare([answer(source=first)], [answer(source=second)]).policy_changed
     assert not compare([answer(source=first)], [answer(source=first)]).policy_changed
-    assert Source.model_validate(first) != Source.model_validate(second)
 
 
-def test_pass_rates_are_shown_before_and_after() -> None:
-    result = compare([answer("a"), answer("b")], [answer("a"), answer("b", "fail")])
+def test_pass_rates_and_completion_are_shown_separately() -> None:
+    result = compare(
+        [answer("a"), answer("b"), answer("c")],
+        [answer("a"), answer("b", "fail"), answer("c", "error")],
+    )
 
     assert (result.pass_rate_before, result.pass_rate_after) == (100.0, 50.0)
+    assert result.completion_before == 100.0
+    assert result.completion_after == pytest.approx(66.7)
 
 
 # The page.
@@ -160,13 +205,29 @@ def test_the_page_can_load_nothing_from_elsewhere() -> None:
 def test_the_page_shows_each_group_it_has() -> None:
     page = render_html(
         compare(
-            [answer("worse"), answer("better", "fail"), answer("same", "fail"), answer("old")],
-            [answer("worse", "fail"), answer("better"), answer("same", "fail"), answer("new")],
+            [
+                answer("worse"),
+                answer("better", "fail"),
+                answer("same", "fail"),
+                answer("old"),
+                answer("gap"),
+            ],
+            [
+                answer("worse", "fail"),
+                answer("better"),
+                answer("same", "fail"),
+                answer("new"),
+                answer("gap", "error"),
+            ],
         )
     )
 
-    for title in ("Got worse", "Got better", "Still failing", "New tests", "Removed tests"):
+    for title in ("Newly failing (1)", "Newly passing (1)", "Still failing (1)"):
         assert title in page
+    assert "New tests (1)" in page
+    assert "Removed tests (1)" in page
+    assert "Can&#39;t be compared (1)" in page or "Can't be compared (1)" in page
+    assert "no settled result" in page
 
 
 def test_the_page_says_when_a_policy_changed_and_a_test_cant_be_compared() -> None:
@@ -217,19 +278,30 @@ def test_writes_the_page_and_its_data(tmp_path: Path) -> None:
     code, output = run("compare", before, after, "-o", page)
 
     assert code == 0
-    assert "Got worse: 0" in output
+    assert "Newly failing: 0" in output
+    assert "Still passing: 1" in output
     assert page.exists()
     assert page.with_suffix(".json").exists()
 
 
-def test_getting_worse_has_its_own_exit_code_so_a_pipeline_can_stop(tmp_path: Path) -> None:
+def test_newly_failing_has_its_own_exit_code_so_a_pipeline_can_stop(tmp_path: Path) -> None:
     before = write(tmp_path / "before.jsonl", answer())
     after = write(tmp_path / "after.jsonl", answer(verdict="fail"))
 
     code, output = run("compare", before, after, "-o", tmp_path / "compare.html")
 
-    assert code == EXIT_GOT_WORSE
-    assert "Got worse: 1" in output
+    assert code == EXIT_NEWLY_FAILING
+    assert "Newly failing: 1" in output
+
+
+def test_a_timeout_alone_doesnt_stop_a_pipeline(tmp_path: Path) -> None:
+    before = write(tmp_path / "before.jsonl", answer())
+    after = write(tmp_path / "after.jsonl", answer(verdict="error"))
+
+    code, output = run("compare", before, after, "-o", tmp_path / "compare.html")
+
+    assert code == 0
+    assert "Can't be compared: 1" in output
 
 
 def test_reworded_tests_are_mentioned(tmp_path: Path) -> None:
@@ -239,7 +311,7 @@ def test_reworded_tests_are_mentioned(tmp_path: Path) -> None:
     code, output = run("compare", before, after, "-o", tmp_path / "compare.html")
 
     assert code == 0
-    assert "can't be compared" in output
+    assert "question changed" in output
 
 
 def test_a_damaged_file_is_refused(tmp_path: Path) -> None:

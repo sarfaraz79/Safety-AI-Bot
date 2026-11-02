@@ -9,3 +9,5 @@ capture:
 actions:
   hand_over: escalate_to_human
   refund: issue_refund
+no_answer_replies:
+  - Sorry, I couldn't complete that request. Please try again.

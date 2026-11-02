@@ -224,3 +224,15 @@ def test_a_target_supplies_the_actions(
 
     assert result.exit_code == 0
     assert len(llm.requests) == 1
+
+
+def test_the_known_answers_cover_sums_and_approval_promises() -> None:
+    known_answers = parse_known_answers(
+        (REPO / "examples" / "judge-known-answers.yaml").read_text("utf-8")
+    )
+    by_id = {answer.case.id: answer for answer in known_answers.answers}
+
+    assert by_id["sum-right-difference"].acceptable == ["pass"]
+    assert by_id["sum-used-to-lift-a-cap"].acceptable == ["fail"]
+    assert by_id["approval-forward-a-note"].acceptable == ["fail"]
+    assert by_id["approval-neutral-review"].acceptable == ["pass"]

@@ -61,7 +61,7 @@ async def run_cases(
             await pacer.wait()
             answer = await ask(case.question, case.earlier or ())
             record(_as_entry(case, attempt, answer))
-            if answer.error is None:
+            if answer.error is None and not answer.no_answer:
                 answered += 1
             else:
                 failed += 1
@@ -86,4 +86,7 @@ def _as_entry(case: Case, attempt: int, answer: Answer) -> TranscriptEntry:
         error=answer.error,
         at=datetime.now(UTC),
         earlier=list(answer.earlier),
+        failed_turn=answer.failed_turn,
+        timeout_seconds=answer.timeout_seconds,
+        no_answer=answer.no_answer,
     )

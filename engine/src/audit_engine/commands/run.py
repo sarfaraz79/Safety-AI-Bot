@@ -49,6 +49,9 @@ def run_command(
         float,
         typer.Option(min=0.1, max=MAX_REQUESTS_PER_SECOND, help="Most new requests per second."),
     ] = 5.0,
+    max_requests: Annotated[
+        int | None, typer.Option(min=1, help="Refuse to start if this would send more requests.")
+    ] = None,
     force: Annotated[bool, typer.Option("--force", help="Replace an existing transcript.")] = False,
 ) -> None:
     """Put a test file's questions to a bot, and save every answer as it arrives."""
@@ -63,8 +66,11 @@ def run_command(
         common.fail(f"{tests_path} has no tests.")
 
     limits = RunLimits(repeats=repeats, concurrency=concurrency, requests_per_second=rate)
+    requests = sum(1 + len(case.earlier or ()) for case in cases.tests) * repeats
+    if max_requests is not None and requests > max_requests:
+        common.fail(f"This would send {requests} requests, over the limit of {max_requests}.")
     typer.echo(
-        f"Requests to send: {len(cases.tests) * repeats} "
+        f"Requests to send: {requests} "
         f"({len(cases.tests)} tests, {repeats} each). Each may cost the bot's owner money."
     )
     client = make_target_client(target, token)

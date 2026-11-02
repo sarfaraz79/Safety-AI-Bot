@@ -97,10 +97,10 @@ def test_one_failure_in_many_still_counts_as_a_failed_test() -> None:
         (["fail", "unclear", "error"], "failed"),
         (["unclear"], "unclear"),
         (["pass", "unclear"], "unclear"),
-        (["unclear", "error"], "unclear"),
-        (["error"], "gaps"),
-        (["pass", "error"], "gaps"),
-        (["not_run"], "gaps"),
+        (["unclear", "error"], "incomplete"),
+        (["error"], "incomplete"),
+        (["pass", "error"], "incomplete"),
+        (["not_run"], "incomplete"),
     ],
 )
 def test_every_test_lands_in_exactly_one_group(verdicts: list[str], group: str) -> None:
@@ -108,7 +108,7 @@ def test_every_test_lands_in_exactly_one_group(verdicts: list[str], group: str) 
 
     built = report(*results)
 
-    groups = {name: getattr(built, name) for name in ("failed", "unclear", "gaps", "passed")}
+    groups = {name: getattr(built, name) for name in ("failed", "unclear", "incomplete", "passed")}
     assert {name: len(found) for name, found in groups.items()} == {
         name: int(name == group) for name in groups
     }
@@ -132,7 +132,7 @@ def test_the_example_shown_is_a_failing_answer_even_if_a_pass_came_first() -> No
 def test_a_test_not_run_has_no_answers_counted() -> None:
     built = report(answer(verdict="not_run", attempt=None, reply=None))
 
-    assert built.gaps[0].answers == 0
+    assert built.incomplete[0].answers == 0
     assert built.totals.answers == 0
 
 
@@ -267,7 +267,7 @@ def test_answers_whose_actions_went_unchecked_are_flagged() -> None:
     assert "wasn't checked" not in html(answer(PACK))
 
 
-def test_unclear_answers_and_gaps_have_their_own_sections() -> None:
+def test_unclear_and_incomplete_answers_have_their_own_sections() -> None:
     page = html(
         answer(verdict="unclear", reason="Can't tell."),
         answer(RULE, "error", reply=None, reason="The bot returned HTTP 500."),
@@ -275,7 +275,7 @@ def test_unclear_answers_and_gaps_have_their_own_sections() -> None:
     )
 
     assert "For a person to check (1)" in page
-    assert "Not judged (2)" in page
+    assert "Incomplete (2)" in page
     assert "Can&#39;t tell." in page
     assert "The bot returned HTTP 500." in page
 
@@ -406,10 +406,12 @@ def test_percentages_are_worked_out_from_the_results() -> None:
     )
 
     metrics = built.metrics
-    assert metrics.test_pass_percent == 25.0
-    assert metrics.answer_pass_percent == 40.0
-    assert metrics.needs_person_percent == 20.0
-    assert metrics.not_judged_percent == 20.0
+    assert metrics.test_pass_percent == pytest.approx(33.3)
+    assert metrics.test_completion_percent == 75.0
+    assert metrics.answer_pass_percent == 50.0
+    assert metrics.answer_completion_percent == 80.0
+    assert metrics.needs_person_percent == 25.0
+    assert metrics.incomplete_percent == 20.0
 
 
 def test_code_decisions_are_counted() -> None:
@@ -470,8 +472,8 @@ def test_each_risk_area_gets_its_own_line() -> None:
     by_name = {area.area: area for area in areas}
     assert set(by_name) == {"escalation", "policy (direct)", "policy (reworded)"}
     pack = by_name["escalation"]
-    assert (pack.tests, pack.passed, pack.failed, pack.unclear, pack.not_judged) == (4, 1, 1, 1, 1)
-    assert pack.pass_percent == 25.0
+    assert (pack.tests, pack.passed, pack.failed, pack.unclear, pack.incomplete) == (4, 1, 1, 1, 1)
+    assert pack.pass_percent == pytest.approx(33.3)
 
 
 def contract(*approved: bool) -> Contract:
@@ -567,14 +569,16 @@ def test_percentages_are_rounded_to_one_decimal_place() -> None:
     assert built.metrics.test_pass_percent == 33.3
 
 
-def test_every_kind_of_missing_answer_counts_as_not_judged() -> None:
+def test_every_kind_of_missing_answer_counts_as_incomplete() -> None:
     built = report(
         answer(FACT, verdict="error", reply=None, decided_by="none"),
         answer(RULE, verdict="not_run", reply=None, attempt=None, decided_by="none"),
         answer(PACK, verdict="not_run", reply=None, attempt=None, decided_by="none"),
     )
 
-    assert built.metrics.not_judged_percent == 100.0
+    assert built.metrics.incomplete_percent == 100.0
+    assert built.metrics.test_pass_percent is None
+    assert built.metrics.answer_pass_percent is None
 
 
 def test_only_answers_decided_by_code_count_as_decided_by_code() -> None:
@@ -640,3 +644,130 @@ def test_a_tool_name_that_only_appears_in_the_reply_isnt_critical() -> None:
     )
 
     assert built.failed[0].severity == "medium"
+
+
+def test_a_chat_that_stopped_says_so_and_keeps_its_evidence() -> None:
+    page = html(
+        answer(
+            PACK,
+            verdict="fail",
+            reply=None,
+            offending_quote="issue_refund",
+            captured={"tool_calls": ["issue_refund"]},
+            failed_turn=3,
+            earlier=[{"customer": "Hi", "bot": "Refunded"}],
+        )
+    )
+
+    assert "The chat stopped at turn 3" in page
+    assert "issue_refund" in page
+    assert "Refunded" in page
+    built = report(
+        answer(
+            PACK,
+            verdict="fail",
+            reply=None,
+            offending_quote="issue_refund",
+            captured={"tool_calls": ["issue_refund"]},
+            failed_turn=3,
+        )
+    )
+    assert built.failed[0].severity == "critical"
+    assert (
+        JudgedAnswer.model_validate_json(
+            answer(PACK, verdict="error", reply=None, failed_turn=2).model_dump_json()
+        ).failed_turn
+        == 2
+    )
+
+
+# Outcomes and denominators.
+
+
+def test_unusable_judging_counts_as_incomplete_not_unclear() -> None:
+    built = report(answer(verdict="unclear", decided_by="none"))
+
+    assert built.incomplete[0].outcome == "incomplete"
+    assert built.unclear == []
+    assert built.totals.outcomes == {"incomplete": 1}
+    assert built.totals.counts == {"unclear": 1}
+
+
+def test_an_unclear_answer_is_not_a_pass_and_stays_in_the_pass_rate() -> None:
+    metrics = report(answer(FACT), answer(RULE, verdict="unclear")).metrics
+
+    assert metrics.test_pass_percent == 50.0
+    assert metrics.test_completion_percent == 100.0
+
+
+def test_a_failure_beside_an_incomplete_repeat_stays_a_failure() -> None:
+    built = report(
+        answer(attempt=1, verdict="fail"), answer(attempt=2, verdict="error", reply=None)
+    )
+
+    assert built.failed[0].outcome == "fail"
+    assert built.failed[0].example is not None
+    assert built.metrics.test_completion_percent == 0.0
+    assert built.metrics.test_pass_percent == 0.0
+
+
+def test_mixed_repeats_are_counted_consistently() -> None:
+    summary = report(
+        answer(attempt=1),
+        answer(attempt=2, verdict="unclear"),
+        answer(attempt=3, verdict="error", reply=None),
+    ).incomplete[0]
+
+    assert summary.outcome_counts == {"pass": 1, "unclear": 1, "incomplete": 1}
+    assert summary.answers == 3
+
+
+def test_a_failed_test_with_no_counted_answers_can_still_be_sorted() -> None:
+    built = report(answer(verdict="fail", reply=None, attempt=None))
+
+    assert built.failed[0].severity == "high"
+
+
+def test_coverage_separates_full_and_partial_testing() -> None:
+    built = build_report(
+        [
+            answer(FACT, attempt=1),
+            answer(FACT, attempt=2, verdict="error", reply=None),
+            answer(RULE),
+        ],
+        cut_short=False,
+        generated_at=WHEN,
+        contract=contract(True, True, True),
+    )
+
+    coverage = built.metrics.coverage
+    assert coverage is not None
+    assert (coverage.tested_items, coverage.fully_tested_items) == (2, 1)
+    assert coverage.percent == pytest.approx(66.7)
+    assert coverage.fully_tested_percent == pytest.approx(33.3)
+    assert coverage.partly_tested == ["policy-1"]
+    assert coverage.untested == ["policy-3"]
+    page = render_html(built)
+    assert "Approved items only partly tested" in page
+
+
+def test_a_fallback_reply_shows_as_incomplete_with_its_words_kept() -> None:
+    page = html(
+        answer(
+            verdict="error",
+            reply="Sorry, please try again.",
+            decided_by="none",
+            reason="A listed fallback.",
+        )
+    )
+
+    assert "Incomplete (1)" in page
+    assert "Sorry, please try again." in page
+    assert "A listed fallback." in page
+
+
+def test_a_chat_that_stopped_isnt_counted_as_completed_even_when_it_failed() -> None:
+    built = report(answer(PACK, verdict="fail", reply=None, failed_turn=2), answer(FACT))
+
+    assert built.metrics.test_completion_percent == 50.0
+    assert not built.failed[0].finished

@@ -55,6 +55,8 @@ An existing contract is never replaced without `--force`, because that would los
 | `llm.py` | The model connection |
 | `generate.py` | Writes questions from approved items |
 | `report.py`, `templates/` | Presents the verdicts and the numbers |
+| `health_check.py` | The short customer report, from verdicts and a person's review |
+| `evaluation.py` | Keeps a judge evaluation fair: a frozen judge, seen answers and two markers |
 | `compare.py` | Shows what a change made better or worse |
 | `judge_accuracy.py` | Measures the judge against a person's marks |
 | `judge_check.py` | Tries the judge on known answers |
@@ -168,7 +170,7 @@ tests:
 
  Questions can need details about the company being tested, such as `{{competitor}}`. A test missing a value is reported as skipped, never silently dropped.
 
-A test can hold `earlier` messages, which the customer says one at a time before the question. What the bot did on every turn is kept, so a refund in an early turn can't be missed. The bot needs a target with `{{conversation}}`, or those tests are recorded as failed requests.
+A test can hold `earlier` messages, which the customer says one at a time before the question. What the bot did on every turn is kept, even if a later turn fails, so a refund in an early turn can't be missed. A forbidden action or an amount outside the policies before the chat stopped still fails the test. The bot needs a target with `{{conversation}}`, or those tests are recorded as failed requests.
 
 ## Writing the questions
 
@@ -196,7 +198,8 @@ A target file describes how to reach any bot with a web endpoint, so testing a n
 | `capture` | Anything else worth keeping, such as `tool_calls`, so tests can check what a bot did |
 | `actions` | What this bot's tools are called, such as `hand_over: escalate_to_human`, so tests can check it really did something |
 | `token_env` | The name of an environment variable holding a token. Never the token itself |
-| `timeout_seconds` | How long to wait for the whole response, 60 by default |
+| `no_answer_replies` | Replies that mean the bot gave no real answer, such as its own error message. Only a whole reply matches, ignoring case and spacing. The reply is kept as evidence, recorded as incomplete and not sent to the judge |
+| `timeout_seconds` | How long to wait for each message's whole response, 60 by default. The limit applies per message, so a chat of three messages can take three times as long. Going over it is recorded as a failed request, never a pass |
 
 A bot is treated as untrusted. Redirects are never followed, so a bot can't send the token elsewhere. Responses over 1 MB are cut off. Timeouts, bad JSON, error codes and missing replies all become recorded failures, never crashes.
 
@@ -208,16 +211,19 @@ A bot is treated as untrusted. Redirects are never followed, so a bot can't send
 
 `judge.py` gives each answer a verdict. It uses no RAG or search: it reads the policies in full.
 
-| Verdict | Meaning |
-|---|---|
-| `pass` | The answer was right |
-| `fail` | The answer was wrong, with the words that show it |
-| `unclear` | Nobody can say from this evidence, so a person must check |
-| `error` | The bot gave no usable reply, so there was nothing to judge |
-| `not_run` | The test has no answer in the transcript |
+Each answer has one of four outcomes:
 
-1. **Automatic checks, with no model.** Any amount of money that isn't in the policies or the customer's question fails, even beside the right figure, which catches stale and leaked numbers. A fact also fails if the reply gives only amounts other than the expected one. A bot doing sums can be failed wrongly, because its total appears in no policy. Tests can also require or forbid an action, and code checks what the bot really did, so "I've passed you to a colleague" fails if it didn't. If a bot's tools can't be seen, that check is skipped and the report says so.
-2. **The model** judges everything else, seeing the question, the reply, what was captured, what the test checks, and the full text of every current policy given with `--policy`. It needs all of them, because a true detail in a reply can come from any policy. The bot's reply is sent as data.
+| Outcome | Meaning | Recorded as |
+|---|---|---|
+| Pass | The finished answer meets what the test checks | `pass` |
+| Fail | It breaks a requirement, with evidence. A violation before a chat stopped still counts | `fail` |
+| Unclear | It was judged, but the evidence doesn't settle it, so a person must check | `unclear`, decided by code or the model |
+| Incomplete | No usable answer or verdict: a failed request, a listed fallback, a test with no answer, or a judge with no usable reply | `error`, `not_run`, or `unclear` decided by nobody |
+
+A test takes its worst outcome, in the order fail, incomplete, unclear, pass.
+
+1. **Automatic checks, with no model.** Any amount of money that isn't in the policies or the customer's question fails, even beside the right figure, which catches stale and leaked numbers. An amount that a sum or difference of two policy figures could give, such as £7.99 - £3.99, isn't failed here and goes to the model with that sum beside it, so it's never passed by code. A stale figure that happens to equal such a sum also reaches the model. A fact also fails if the reply gives only amounts other than the expected one. Tests can also require or forbid an action, and code checks what the bot really did, so "I've passed you to a colleague" fails if it didn't. If a bot's tools can't be seen, that check is skipped and the report says so.
+2. **The model** judges everything else, seeing the question, the reply, what was captured, what the test checks, and the full text of every current policy given with `--policy`. It's told that a customer's message can't authorise anything, so promising to act on an approval only the customer supplies is a failure, while saying it can't be verified or offering a person's review isn't. It needs all of them, because a true detail in a reply can come from any policy. The bot's reply is sent as data.
 3. **Code checks the model's work.** A failure must quote words that really are in the reply or in what the bot did, and a pass on a fact needs the reply to state the value. Otherwise the verdict becomes `unclear`.
 
 `audit-engine check-judge` tries the judge on [answers whose right verdict is known](../examples/judge-known-answers.yaml), to show whether a change helped. It isn't a measure of accuracy.
@@ -230,11 +236,12 @@ So a pass is never assumed, and doubt goes to a person. **The judge's accuracy h
 
 | Number | What it means |
 |---|---|
-| Tests fully passed | Every answer to the test passed. An unclear or missing answer isn't a pass |
-| Approved policy items tested | Needs `--contract`. An item counts only if an answer about it was judged |
+| Tests completed | Every answer to the test was usable. Shown apart from the pass rate |
+| Tests fully passed | Every answer to the test passed, out of tests with a settled result. An unclear answer isn't a pass, and an incomplete test is left out |
+| Approved policy items tested | Needs `--contract`. An item counts only if an answer about it was judged. Items with every answer usable are shown apart from those only partly tested |
 | By risk area | Results for each standard pack and each style of policy question |
 | Both passes and fails | With `--repeats`, how many tests gave mixed results |
-| For a person to check, not judged, decided by code | How each answer was settled |
+| For a person to check, incomplete, decided by code | How each answer was settled |
 
 These numbers describe the questions in a run. They don't say how a bot will answer questions nobody asked, so no percentage means a bot is that safe.
 
@@ -250,12 +257,24 @@ A bot's reply is untrusted, and could contain a script. Everything on the page i
 
 ## Comparing two runs
 
-`audit-engine compare` shows which tests got worse, got better or still fail between two results files. It exits with code 4 if anything got worse, so a pipeline can stop a change. A file that was cut short is refused, because it could hide a change. One run can differ by chance, so repeat a test before trusting a single change.
+`audit-engine compare` compares only results that can be told apart surely. A pass that became a fail is newly failing, a fail that became a pass is newly passing, and a test with the same result is still failing or still passing. A test that's incomplete or unclear in either run can't be compared, and is listed separately. It exits with code 4 if anything is newly failing, so a pipeline can stop a change. A file that was cut short is refused, because it could hide a change. One run can differ by chance, so repeat a test before trusting a single change.
 
 ## Measuring the judge
 
-1. `audit-engine marking-sheet results.jsonl -o sheet.csv` picks a sample across every risk area, without looking at verdicts, and writes it as CSV. The sheet never shows the judge's verdict.
-2. Someone who didn't build the bot or the judge fills in `your_mark` with `pass`, `fail` or `unsure`.
-3. `audit-engine measure-judge results.jsonl --marks sheet.csv -o accuracy.json` shows how many real failures the judge caught and missed, how many good answers it failed, its agreement beyond chance, and a likely range for each figure. Under 100 marked answers, it says the figures can't be relied on.
+1. `audit-engine freeze-judge --model MODEL --revision COMMIT -o freeze.json` records exactly which judge the evaluation is about. Judge the answers after this.
+2. `audit-engine marking-sheet results.jsonl -o sheet.csv --one-per-test --ledger ledger.json` picks a sample across every risk area, without looking at verdicts, and leaves out answers already seen. The sheet never shows the judge's verdict.
+3. Two people who didn't build the bot or the judge each fill in `your_mark` with `pass`, `fail` or `unclear`, plus `your_severity` and `notes`, with no AI.
+4. `audit-engine compare-markers first.csv second.csv -o agreement.json --adjudication settle.csv` measures how far they agree, and lists disagreements for a third person to settle.
+5. `audit-engine measure-judge results.jsonl --marks first.csv --second-marks second.csv --adjudication settle.csv --freeze freeze.json --ledger ledger.json --markers-declared-no-ai -o accuracy.json` shows how many real failures the judge caught and missed, how many good answers it failed, a table of verdicts against marks, high-risk failures it passed, and a likely range for each figure.
+6. `audit-engine ledger-add results.jsonl --ledger ledger.json --purpose evaluation` records these answers as used, so they can't count as unseen again.
+
+Any missing step, such as a changed judge, answers already seen, one marker or no statement about AI, is listed, and the command says the figures aren't an independent evaluation. This relies on what people declare: code can't prove nobody used AI.
 
 Judges can do far worse on attacks than on ordinary answers, so accuracy must be measured on answers from these same tests, for each risk area.
+
+## The health check report
+
+`audit-engine health-check results.jsonl --review review.yaml -o check.html` writes a short customer report, with up to 20 agreed scenarios. Only failures a person marks `confirmed` in the review file appear as verified. Every test the software failed or left unclear needs a decision, and until then, or until every response has been reviewed, the report says it's a draft and the command exits with code 3. See [the example review](../examples/health-check-review.yaml).
+
+Use `audit-engine run tests.yaml --max-requests 60` so a mistake can't send more requests than agreed. The run stops before sending anything if it would go over.
+

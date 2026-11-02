@@ -5,12 +5,12 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Self
+from typing import Annotated, Any, Self
 
 import httpx2
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from audit_engine.fields import HEADER_SAFE, EncryptedUrl
+from audit_engine.fields import HEADER_SAFE, EncryptedUrl, Text
 from audit_engine.transcripts import Turn
 from audit_engine.yaml_files import YamlFileError, load_model
 
@@ -41,6 +41,10 @@ class Target(BaseModel):
     actions: dict[str, str] = Field(default_factory=dict)
     token_env: str | None = Field(default=None, pattern=r"^[A-Z_][A-Z0-9_]*$")
     timeout_seconds: float = Field(default=60.0, gt=0, le=600)
+    # Replies that mean the bot gave no real answer, such as its own error message.
+    no_answer_replies: list[Annotated[Text, Field(max_length=500)]] = Field(
+        default_factory=list, max_length=20
+    )
 
     @field_validator("capture")
     @classmethod
@@ -67,6 +71,9 @@ class Answer:
     status: int | None
     error: str | None
     earlier: tuple[Turn, ...] = ()
+    failed_turn: int | None = None  # the customer message with no usable reply, counting from 1
+    timeout_seconds: float | None = None
+    no_answer: bool = False  # `reply` is a listed fallback, kept as evidence but not an answer
 
 
 def parse_target(text: str) -> Target:
@@ -95,6 +102,7 @@ class TargetClient:
         self._target = target
         self._url = str(target.url)
         self._headers = {"Authorization": f"Bearer {token}"} if token else {}
+        self._no_answer_replies = frozenset(_normalised(r) for r in target.no_answer_replies)
         # Redirects stay off, so a bot can't send the token somewhere else.
         self._client = http_client or httpx2.AsyncClient(follow_redirects=False)
 
@@ -104,23 +112,38 @@ class TargetClient:
             return _failed(None, NO_CONVERSATION)
         turns: list[Turn] = []
         captured: dict[str, Any] = {}
-        for message in earlier:
+        for number, message in enumerate((*earlier, question), start=1):
             answer = await self._send(message, turns)
-            if answer.reply is None:
-                return replace(answer, earlier=tuple(turns))
-            turns.append(Turn(customer=message, bot=answer.reply))
             captured = _merge_captured(captured, answer.captured)
-        answer = await self._send(question, turns)
+            if answer.reply is None or answer.no_answer:
+                return self._finished(answer, captured, turns, failed_turn=number)
+            if number <= len(earlier):
+                turns.append(Turn(customer=message, bot=answer.reply))
+        return self._finished(answer, captured, turns, failed_turn=None)
+
+    def _finished(
+        self,
+        answer: Answer,
+        captured: dict[str, Any],
+        turns: Sequence[Turn],
+        *,
+        failed_turn: int | None,
+    ) -> Answer:
         return replace(
-            answer, captured=_merge_captured(captured, answer.captured), earlier=tuple(turns)
+            answer,
+            captured=captured,
+            earlier=tuple(turns),
+            failed_turn=failed_turn,
+            timeout_seconds=self._target.timeout_seconds,
         )
 
     async def _send(self, question: str, turns: Sequence[Turn]) -> Answer:
+        limit = self._target.timeout_seconds
         try:
-            async with asyncio.timeout(self._target.timeout_seconds):
+            async with asyncio.timeout(limit):
                 status, body = await self._post(question, turns)
         except (TimeoutError, httpx2.TimeoutException):
-            return _failed(None, "The request timed out.")
+            return _failed(None, f"The request timed out after {limit:g} seconds.")
         except httpx2.HTTPError:
             return _failed(None, "The request failed.")
         if body is None:
@@ -135,8 +158,13 @@ class TargetClient:
     async def _post(self, question: str, turns: Sequence[Turn]) -> tuple[int, bytes | None]:
         """Read the response in pieces, up to the size limit."""
         payload = _fill(self._target.request, question, turns)
+        # Set here, as the client's own default would cut every request off at five seconds.
         async with self._client.stream(
-            "POST", self._url, json=payload, headers=self._headers
+            "POST",
+            self._url,
+            json=payload,
+            headers=self._headers,
+            timeout=self._target.timeout_seconds,
         ) as response:
             chunks: list[bytes] = []
             size = 0
@@ -160,7 +188,18 @@ class TargetClient:
             json.dumps([reply, captured], ensure_ascii=False).encode()
         except ValueError:
             return _failed(status, "The response contains broken Unicode.")
-        return Answer(reply=reply, captured=captured, status=status, error=None)
+        return Answer(
+            reply=reply,
+            captured=captured,
+            status=status,
+            error=None,
+            no_answer=_normalised(reply) in self._no_answer_replies,
+        )
+
+
+def _normalised(reply: str) -> str:
+    """Ignore only case and spacing, and match whole replies, so a real answer can't match."""
+    return " ".join(reply.split()).casefold()
 
 
 def _failed(status: int | None, error: str) -> Answer:

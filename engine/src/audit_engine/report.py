@@ -10,7 +10,7 @@ from jinja2 import Environment, PackageLoader, StrictUndefined
 from pydantic import BaseModel
 
 from audit_engine.contract import Contract, Source
-from audit_engine.results import JudgedAnswer, Verdict, area_of
+from audit_engine.results import JudgedAnswer, Outcome, Verdict, area_of, outcome_of
 from audit_engine.testcases import Case
 from audit_engine.transcripts import Turn
 
@@ -30,6 +30,7 @@ class Example(BaseModel):
     actions: dict[str, Any]
     decided_by: str
     earlier: list[Turn]
+    failed_turn: int | None
 
 
 class TestSummary(BaseModel):
@@ -39,6 +40,9 @@ class TestSummary(BaseModel):
 
     case: Case
     counts: dict[Verdict, int]
+    outcome: Outcome
+    outcome_counts: dict[Outcome, int]
+    finished: bool  # every answer is usable and no chat stopped part way
     answers: int
     severity: Severity | None
     example: Example | None
@@ -48,17 +52,18 @@ class Totals(BaseModel):
     tests: int
     answers: int
     counts: dict[Verdict, int]
+    outcomes: dict[Outcome, int]
 
 
 class AreaResult(BaseModel):
-    """How one risk area did. Tests that weren't clearly right don't count as passed."""
+    """How one risk area did. The pass rate leaves out tests with no settled result."""
 
     area: str
     tests: int
     passed: int
     failed: int
     unclear: int
-    not_judged: int
+    incomplete: int
     pass_percent: float | None
 
 
@@ -68,15 +73,20 @@ class Coverage(BaseModel):
     approved_items: int
     tested_items: int
     percent: float | None
+    fully_tested_items: int
+    fully_tested_percent: float | None
+    partly_tested: list[str]
     untested: list[str]
     unapproved_items: int
 
 
 class Metrics(BaseModel):
     test_pass_percent: float | None
+    test_completion_percent: float | None
     answer_pass_percent: float | None
+    answer_completion_percent: float | None
     needs_person_percent: float | None
-    not_judged_percent: float | None
+    incomplete_percent: float | None
     decided_by_code_percent: float | None
     repeated_tests: int
     inconsistent_tests: int
@@ -95,7 +105,7 @@ class Report(BaseModel):
     metrics: Metrics
     failed: list[TestSummary]
     unclear: list[TestSummary]
-    gaps: list[TestSummary]
+    incomplete: list[TestSummary]
     passed: list[TestSummary]
 
 
@@ -111,22 +121,15 @@ def build_report(
     for result in results:
         by_test.setdefault(result.case.id, []).append(result)
     summaries = [_summarise(answers) for answers in by_test.values()]
-
-    def has(summary: TestSummary, *verdicts: Verdict) -> bool:
-        return any(summary.counts.get(verdict, 0) for verdict in verdicts)
-
-    failed = [s for s in summaries if has(s, "fail")]
+    failed = [s for s in summaries if s.outcome == "fail"]
     failed.sort(
         key=lambda s: (
             _SEVERITY_ORDER[s.severity or "medium"],
-            -s.counts["fail"] / s.answers,
+            -s.counts["fail"] / s.answers if s.answers else 0,
             s.case.id,
         )
     )
-    unclear = [s for s in summaries if not has(s, "fail") and has(s, "unclear")]
-    gaps = [s for s in summaries if not has(s, "fail", "unclear") and has(s, "error", "not_run")]
-    passed = [s for s in summaries if set(s.counts) == {"pass"}]
-    verdicts = Counter(result.verdict for result in results)
+    passed = [s for s in summaries if s.outcome == "pass"]
     return Report(
         generated_at=generated_at,
         source=results[0].source if results else None,
@@ -135,12 +138,13 @@ def build_report(
         totals=Totals(
             tests=len(summaries),
             answers=sum(s.answers for s in summaries),
-            counts=dict(verdicts),
+            counts=dict(Counter(result.verdict for result in results)),
+            outcomes=dict(Counter(outcome_of(result) for result in results)),
         ),
         metrics=_metrics(results, summaries, failed, passed, contract),
         failed=failed,
-        unclear=unclear,
-        gaps=gaps,
+        unclear=[s for s in summaries if s.outcome == "unclear"],
+        incomplete=[s for s in summaries if s.outcome == "incomplete"],
         passed=passed,
     )
 
@@ -156,14 +160,19 @@ def _metrics(
     passed: Sequence[TestSummary],
     contract: Contract | None,
 ) -> Metrics:
-    verdicts = Counter(result.verdict for result in results)
+    outcomes = Counter(outcome_of(result) for result in results)
+    usable = len(results) - outcomes["incomplete"]
+    settled = [s for s in summaries if s.outcome != "incomplete"]
+    complete = [s for s in summaries if s.finished]
     repeated = [s for s in summaries if s.answers > 1]
     inconsistent = [s for s in repeated if s.counts.get("fail") and s.counts.get("pass")]
     return Metrics(
-        test_pass_percent=_percent(len(passed), len(summaries)),
-        answer_pass_percent=_percent(verdicts["pass"], len(results)),
-        needs_person_percent=_percent(verdicts["unclear"], len(results)),
-        not_judged_percent=_percent(verdicts["error"] + verdicts["not_run"], len(results)),
+        test_pass_percent=_percent(len(passed), len(settled)),
+        test_completion_percent=_percent(len(complete), len(summaries)),
+        answer_pass_percent=_percent(outcomes["pass"], usable),
+        answer_completion_percent=_percent(usable, len(results)),
+        needs_person_percent=_percent(outcomes["unclear"], usable),
+        incomplete_percent=_percent(outcomes["incomplete"], len(results)),
         decided_by_code_percent=_percent(
             sum(result.decided_by == "automatic" for result in results), len(results)
         ),
@@ -185,31 +194,33 @@ def _areas(results: Sequence[JudgedAnswer], summaries: Sequence[TestSummary]) ->
 
 
 def _area(area: str, tests: Sequence[TestSummary]) -> AreaResult:
-    failed = sum(bool(s.counts.get("fail")) for s in tests)
-    unclear = sum(bool(s.counts.get("unclear")) and not s.counts.get("fail") for s in tests)
-    passed = sum(set(s.counts) == {"pass"} for s in tests)
+    outcomes = Counter(s.outcome for s in tests)
     return AreaResult(
         area=area,
         tests=len(tests),
-        passed=passed,
-        failed=failed,
-        unclear=unclear,
-        not_judged=len(tests) - passed - failed - unclear,
-        pass_percent=_percent(passed, len(tests)),
+        passed=outcomes["pass"],
+        failed=outcomes["fail"],
+        unclear=outcomes["unclear"],
+        incomplete=outcomes["incomplete"],
+        pass_percent=_percent(outcomes["pass"], len(tests) - outcomes["incomplete"]),
     )
 
 
 def _coverage(contract: Contract, results: Sequence[JudgedAnswer]) -> Coverage:
     """An item counts only if an answer about it was judged, not merely if a test was written."""
-    judged = {
-        result.case.item for result in results if result.verdict in ("pass", "fail", "unclear")
-    }
+    outcomes: dict[str | None, set[Outcome]] = {}
+    for result in results:
+        outcomes.setdefault(result.case.item, set()).add(outcome_of(result))
     approved = [item.id for item in contract.items if item.approved]
-    tested = [item for item in approved if item in judged]
+    judged = [i for i in approved if outcomes.get(i, set()) - {"incomplete"}]
+    partly = [i for i in judged if "incomplete" in outcomes[i]]
     return Coverage(
         approved_items=len(approved),
-        tested_items=len(tested),
-        percent=_percent(len(tested), len(approved)),
+        tested_items=len(judged),
+        percent=_percent(len(judged), len(approved)),
+        fully_tested_items=len(judged) - len(partly),
+        fully_tested_percent=_percent(len(judged) - len(partly), len(approved)),
+        partly_tested=partly,
         untested=[item for item in approved if item not in judged],
         unapproved_items=len(contract.items) - len(approved),
     )
@@ -217,23 +228,31 @@ def _coverage(contract: Contract, results: Sequence[JudgedAnswer]) -> Coverage:
 
 def _summarise(answers: list[JudgedAnswer]) -> TestSummary:
     case = answers[0].case
-    counts = Counter(answer.verdict for answer in answers)
-    worst = _first_with(answers, "fail") or _first_with(answers, "unclear", "error", "not_run")
+    outcomes = Counter(outcome_of(answer) for answer in answers)
+    outcome = _test_outcome(outcomes)
+    worst = next((a for a in answers if outcome_of(a) == outcome and outcome != "pass"), None)
     fails = [answer for answer in answers if answer.verdict == "fail"]
     return TestSummary(
         case=case,
-        counts=dict(counts),
+        counts=dict(Counter(answer.verdict for answer in answers)),
+        outcome=outcome,
+        outcome_counts=dict(outcomes),
+        finished=not outcomes["incomplete"] and not any(a.failed_turn for a in answers),
         answers=sum(1 for answer in answers if answer.verdict != "not_run"),
         severity=_severity(case, fails) if fails else None,
-        example=_to_example(worst) if worst else None,
+        example=example_of(worst) if worst else None,
     )
 
 
-def _first_with(answers: list[JudgedAnswer], *verdicts: Verdict) -> JudgedAnswer | None:
-    return next((answer for answer in answers if answer.verdict in verdicts), None)
+def _test_outcome(outcomes: Counter[Outcome]) -> Outcome:
+    """A confirmed failure always counts. Otherwise, one missing answer leaves a test unfinished."""
+    for outcome in ("fail", "incomplete", "unclear"):
+        if outcomes[outcome]:
+            return outcome
+    return "pass"
 
 
-def _to_example(answer: JudgedAnswer) -> Example:
+def example_of(answer: JudgedAnswer) -> Example:
     return Example(
         attempt=answer.attempt,
         reply=answer.reply,
@@ -242,6 +261,7 @@ def _to_example(answer: JudgedAnswer) -> Example:
         actions=_actions(answer),
         decided_by=answer.decided_by,
         earlier=answer.earlier,
+        failed_turn=answer.failed_turn,
     )
 
 

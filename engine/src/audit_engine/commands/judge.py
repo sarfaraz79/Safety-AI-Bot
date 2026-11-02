@@ -1,6 +1,7 @@
 """`audit-engine judge`: decide whether each answer in a transcript was right."""
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 from typing import Annotated
 
@@ -61,6 +62,7 @@ def judge_command(
     except JudgeError as exc:
         common.fail(str(exc))
     settings = common.load_settings()
+    context = replace(context, model=model or settings.llm_model)
 
     typer.echo(f"Answers to judge: {len(entries)}. Model: {model or settings.llm_model}.")
     try:

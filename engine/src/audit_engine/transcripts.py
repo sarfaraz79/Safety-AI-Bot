@@ -38,6 +38,9 @@ class TranscriptEntry(BaseModel):
     error: str | None
     at: datetime
     earlier: list[Turn] = Field(default_factory=list)
+    failed_turn: int | None = Field(default=None, ge=1)
+    timeout_seconds: float | None = None
+    no_answer: bool = False
 
     @model_validator(mode="after")
     def _check_reply_or_error(self) -> Self:

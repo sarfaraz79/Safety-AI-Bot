@@ -1,16 +1,15 @@
 """Compares two reports of the same tests, to show what a change made better or worse."""
 
 from datetime import datetime
-from typing import Literal
 
 from jinja2 import Environment, PackageLoader, StrictUndefined
 from pydantic import BaseModel
 
 from audit_engine.report import Report, Severity, TestSummary
+from audit_engine.results import Outcome
 
-Standing = Literal["passed", "unclear", "not_judged", "failed"]
-
-_RANK: dict[Standing, int] = {"passed": 0, "unclear": 1, "not_judged": 1, "failed": 2}
+NOT_FINISHED = "One of the runs has no settled result for this test."
+NOT_SETTLED = "A person still has to settle a result that was unclear."
 
 
 class Change(BaseModel):
@@ -18,11 +17,12 @@ class Change(BaseModel):
 
     case_id: str
     question: str
-    before: Standing | None
-    after: Standing | None
+    before: Outcome | None
+    after: Outcome | None
     severity: Severity | None
     reply: str | None
     reason: str | None
+    why_not_comparable: str | None = None
 
 
 class Comparison(BaseModel):
@@ -30,67 +30,65 @@ class Comparison(BaseModel):
     policy_changed: bool
     pass_rate_before: float | None
     pass_rate_after: float | None
-    got_worse: list[Change]
-    got_better: list[Change]
+    completion_before: float | None
+    completion_after: float | None
+    newly_failing: list[Change]
+    newly_passing: list[Change]
     still_failing: list[Change]
+    still_passing: int
+    not_comparable: list[Change]
     new_tests: list[Change]
     removed_tests: list[Change]
     reworded_tests: list[str]
-    unchanged: int
 
 
 def compare_reports(before: Report, after: Report, *, generated_at: datetime) -> Comparison:
-    """Sort every test by how its result moved. A test whose question changed can't be compared."""
+    """Sort every test by how its result moved. Only a pass and a fail can be told apart surely."""
     old, new = _by_id(before), _by_id(after)
-    got_worse: list[Change] = []
-    got_better: list[Change] = []
-    still_failing: list[Change] = []
+    buckets: dict[tuple[Outcome, Outcome], list[Change]] = {}
+    not_comparable: list[Change] = []
     reworded: list[str] = []
-    unchanged = 0
     for case_id in old.keys() & new.keys():
-        (old_summary, was), (new_summary, now) = old[case_id], new[case_id]
-        if old_summary.case.question != new_summary.case.question:
+        was, now = old[case_id], new[case_id]
+        if was.case.question != now.case.question:
             reworded.append(case_id)
-        elif _RANK[now] > _RANK[was]:
-            got_worse.append(_change(new_summary, was, now))
-        elif _RANK[now] < _RANK[was]:
-            got_better.append(_change(new_summary, was, now))
-        elif now == "failed":
-            still_failing.append(_change(new_summary, was, now))
+        elif "incomplete" in (was.outcome, now.outcome):
+            not_comparable.append(_change(now, was.outcome, now.outcome, NOT_FINISHED))
+        elif "unclear" in (was.outcome, now.outcome):
+            not_comparable.append(_change(now, was.outcome, now.outcome, NOT_SETTLED))
         else:
-            unchanged += 1
+            change = _change(now, was.outcome, now.outcome)
+            buckets.setdefault((was.outcome, now.outcome), []).append(change)
     return Comparison(
         generated_at=generated_at,
         policy_changed=before.source != after.source,
         pass_rate_before=before.metrics.test_pass_percent,
         pass_rate_after=after.metrics.test_pass_percent,
-        got_worse=_in_order(got_worse),
-        got_better=_in_order(got_better),
-        still_failing=_in_order(still_failing),
-        new_tests=_in_order([_change(new[i][0], None, new[i][1]) for i in new.keys() - old.keys()]),
+        completion_before=before.metrics.test_completion_percent,
+        completion_after=after.metrics.test_completion_percent,
+        newly_failing=_in_order(buckets.get(("pass", "fail"), [])),
+        newly_passing=_in_order(buckets.get(("fail", "pass"), [])),
+        still_failing=_in_order(buckets.get(("fail", "fail"), [])),
+        still_passing=len(buckets.get(("pass", "pass"), [])),
+        not_comparable=_in_order(not_comparable),
+        new_tests=_in_order(
+            [_change(new[i], None, new[i].outcome) for i in new.keys() - old.keys()]
+        ),
         removed_tests=_in_order(
-            [_change(old[i][0], old[i][1], None) for i in old.keys() - new.keys()]
+            [_change(old[i], old[i].outcome, None) for i in old.keys() - new.keys()]
         ),
         reworded_tests=sorted(reworded),
-        unchanged=unchanged,
     )
 
 
-def _by_id(report: Report) -> dict[str, tuple[TestSummary, Standing]]:
-    groups: tuple[tuple[list[TestSummary], Standing], ...] = (
-        (report.failed, "failed"),
-        (report.unclear, "unclear"),
-        (report.gaps, "not_judged"),
-        (report.passed, "passed"),
-    )
-    return {
-        summary.case.id: (summary, standing)
-        for summaries, standing in groups
-        for summary in summaries
-    }
+def _by_id(report: Report) -> dict[str, TestSummary]:
+    groups = (report.failed, report.unclear, report.incomplete, report.passed)
+    return {summary.case.id: summary for summaries in groups for summary in summaries}
 
 
-def _change(summary: TestSummary, before: Standing | None, after: Standing | None) -> Change:
+def _change(
+    summary: TestSummary, before: Outcome | None, after: Outcome | None, why: str | None = None
+) -> Change:
     return Change(
         case_id=summary.case.id,
         question=summary.case.question,
@@ -99,6 +97,7 @@ def _change(summary: TestSummary, before: Standing | None, after: Standing | Non
         severity=summary.severity,
         reply=summary.example.reply if summary.example else None,
         reason=summary.example.reason if summary.example else None,
+        why_not_comparable=why,
     )
 
 

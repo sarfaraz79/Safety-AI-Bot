@@ -217,7 +217,7 @@ def test_marks_are_read_whatever_their_case_and_spacing() -> None:
         "r1": "pass",
         "r2": "fail",
         "r3": "",
-        "r4": "unsure",
+        "r4": "unclear",
     }
 
 
@@ -266,9 +266,14 @@ def test_counts_each_kind_of_agreement_and_mistake() -> None:
 
 
 def test_unmarked_and_unsure_rows_are_counted_but_not_compared() -> None:
-    accuracy = measure(rows("pass", "pass", "pass"), {"r0": "pass", "r1": "unsure", "r2": ""})
+    accuracy = measure(rows("pass", "pass", "pass"), {"r0": "pass", "r1": "unclear", "r2": ""})
 
-    assert (accuracy.rows, accuracy.marked, accuracy.unsure, accuracy.unmarked) == (3, 1, 1, 1)
+    assert (accuracy.rows, accuracy.marked, accuracy.unclear_marks, accuracy.unmarked) == (
+        3,
+        1,
+        1,
+        1,
+    )
     assert accuracy.agreement.out_of == 1
 
 
@@ -393,3 +398,9 @@ def test_a_sheet_exactly_at_the_limit_is_read(monkeypatch: pytest.MonkeyPatch) -
 
 def test_a_sheet_saved_by_a_spreadsheet_with_a_byte_order_mark_is_read() -> None:
     assert parse_marks("\ufeffrow,your_mark\nr1,pass\n") == {"r1": "pass"}
+
+
+def test_a_fallback_has_nothing_to_mark() -> None:
+    labelled = label_answers({"run": [answer(verdict="error", reply="Sorry.")]})
+
+    assert labelled == []

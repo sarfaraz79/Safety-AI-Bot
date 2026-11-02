@@ -17,11 +17,13 @@
 <p class="notice"><strong>Treat these verdicts with care.</strong> A single run of a test can differ by chance, so repeat a test before trusting one change. Every change still needs checking by a person.</p>
 
 <section class="totals" aria-label="Totals">
-  <div class="total"><b>{{ comparison.got_worse | length }}</b><span>Got worse</span></div>
-  <div class="total"><b>{{ comparison.got_better | length }}</b><span>Got better</span></div>
+  <div class="total"><b>{{ comparison.newly_failing | length }}</b><span>Newly failing</span></div>
+  <div class="total"><b>{{ comparison.newly_passing | length }}</b><span>Newly passing</span></div>
   <div class="total"><b>{{ comparison.still_failing | length }}</b><span>Still failing</span></div>
-  <div class="total"><b>{{ comparison.unchanged }}</b><span>No change</span></div>
-  <div class="total"><b>{{ comparison.pass_rate_before }}% to {{ comparison.pass_rate_after }}%</b><span>Tests fully passed</span></div>
+  <div class="total"><b>{{ comparison.still_passing }}</b><span>Still passing</span></div>
+  <div class="total"><b>{{ comparison.not_comparable | length }}</b><span>Can't be compared</span></div>
+  <div class="total"><b>{{ comparison.pass_rate_before }}% to {{ comparison.pass_rate_after }}%</b><span>Tests fully passed, of those settled</span></div>
+  <div class="total"><b>{{ comparison.completion_before }}% to {{ comparison.completion_after }}%</b><span>Tests completed</span></div>
 </section>
 
 {% macro show(title, changes) %}
@@ -39,6 +41,10 @@
     <dt>Bot replied</dt>
     <dd>{{ change.reply }}</dd>
     {% endif %}
+    {% if change.why_not_comparable %}
+    <dt>Why this can't be compared</dt>
+    <dd>{{ change.why_not_comparable }}</dd>
+    {% endif %}
     {% if change.reason %}
     <dt>Why</dt>
     <dd>{{ change.reason }}</dd>
@@ -49,13 +55,14 @@
 {% endif %}
 {% endmacro %}
 
-{{ show("Got worse", comparison.got_worse) }}
+{{ show("Newly failing", comparison.newly_failing) }}
 {{ show("Still failing", comparison.still_failing) }}
-{{ show("Got better", comparison.got_better) }}
+{{ show("Newly passing", comparison.newly_passing) }}
+{{ show("Can't be compared", comparison.not_comparable) }}
 {{ show("New tests", comparison.new_tests) }}
 {{ show("Removed tests", comparison.removed_tests) }}
 {% if comparison.reworded_tests %}
-<h2>Can't be compared ({{ comparison.reworded_tests | length }})</h2>
+<h2>Question changed ({{ comparison.reworded_tests | length }})</h2>
 <ul class="plain">
 {% for case_id in comparison.reworded_tests %}<li>{{ case_id }}: its question changed between runs</li>
 {% endfor %}</ul>
