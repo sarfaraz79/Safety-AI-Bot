@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<title>AI chatbot health check</title>
+{% include "_style.html.j2" %}
+</head>
+<body>
+<main>
+<h1>AI chatbot health check</h1>
+<p class="meta">{{ check.review.customer }}. Generated {{ check.generated_at.strftime("%-d %B %Y") }}.</p>
+
+{% if check.review.sample %}
+<p class="notice"><strong>Sample only.</strong> This uses a fictional company and a practice chatbot. It isn't a real customer's result, and any decisions shown are illustrative.</p>
+{% endif %}
+{% if not check.review_complete %}
+<p class="notice"><strong>Draft: not ready to send.</strong> The human review isn't finished.</p>
+{% endif %}
+
+<h2>Scope</h2>
+<table class="numbers">
+  <tr><th>Chatbot</th><td>{{ check.review.chatbot }}</td></tr>
+  <tr><th>Policy or FAQ source</th><td>{{ check.review.policy_source }}</td></tr>
+  <tr><th>Scenarios agreed</th><td>{{ check.review.scenarios_agreed }}</td></tr>
+  <tr><th>Testing authorised by</th><td>{{ check.review.testing_authorised_by }}</td></tr>
+</table>
+
+<h2>Summary</h2>
+<table class="numbers">
+  <tr><th>Scenarios run</th><td>{{ check.scenarios }}</td></tr>
+  <tr><th>Completed</th><td>{{ check.completed }}</td></tr>
+  <tr><th>Incomplete, with a missing or unusable reply</th><td>{{ check.incomplete }}</td></tr>
+  <tr><th>Verified failures</th><td>{{ check.findings | length }}</td></tr>
+</table>
+{% if check.incomplete_tests %}
+<p class="meta">Incomplete scenarios aren't passes or failures: {{ check.incomplete_tests | join(", ") }}.</p>
+{% endif %}
+
+<h2>Human review</h2>
+<table class="numbers">
+  <tr><th>Reviewer</th><td>{{ check.review.reviewer }}</td></tr>
+  <tr><th>Reviewed on</th><td>{{ check.review.reviewed_on.strftime("%-d %B %Y") }}</td></tr>
+  <tr><th>Every response and tool record reviewed</th><td>{{ "Yes" if check.review.all_responses_reviewed else "No" }}</td></tr>
+  <tr><th>Software flags a person rejected</th><td>{{ check.rejected }}</td></tr>
+  {% if check.awaiting_review %}
+  <tr><th>Still awaiting a decision</th><td>{{ check.awaiting_review | join(", ") }}</td></tr>
+  {% endif %}
+</table>
+
+<h2>Verified failures ({{ check.findings | length }})</h2>
+{% for finding in check.findings %}
+<article class="test">
+  <h3><span class="badge {{ finding.severity }}">{{ finding.severity }}</span> {{ finding.case_id }}</h3>
+  <dl>
+    {% if finding.example.earlier %}
+    <dt>Earlier in the chat</dt>
+    {% for turn in finding.example.earlier %}<dd>Customer: {{ turn.customer }}<br>Bot: {{ turn.bot }}</dd>
+    {% endfor %}
+    {% endif %}
+    <dt>Customer asked</dt>
+    <dd>{{ finding.question }}</dd>
+    {% if finding.example.failed_turn %}
+    <dt>Incomplete</dt>
+    <dd>The chat stopped at turn {{ finding.example.failed_turn }}. What came before it is kept as evidence.</dd>
+    {% endif %}
+    {% if finding.example.reply is not none %}
+    <dt>Chatbot replied</dt>
+    <dd>{{ finding.example.reply }}</dd>
+    {% endif %}
+    {% if finding.example.actions %}
+    <dt>What the chatbot did</dt>
+    <dd><code>{{ finding.example.actions | tojson(indent=2) }}</code></dd>
+    {% endif %}
+    {% if finding.policy_statement %}
+    <dt>What the policy says</dt>
+    <dd>{{ finding.policy_statement }}</dd>
+    {% endif %}
+    {% if finding.policy_quote %}
+    <dt>Source wording</dt>
+    <dd>{{ finding.policy_quote }}</dd>
+    {% endif %}
+    {% if finding.what_should_happen %}
+    <dt>What should happen</dt>
+    <dd>{{ finding.what_should_happen }}</dd>
+    {% endif %}
+    <dt>Recommended investigation</dt>
+    <dd>{{ finding.investigate }}</dd>
+  </dl>
+</article>
+{% else %}
+<p class="meta">None recorded. This doesn't mean the chatbot is safe, only that no failure was confirmed in these scenarios.</p>
+{% endfor %}
+
+<h2>Limitations</h2>
+<ul class="plain">
+{% for limitation in limitations %}<li>{{ limitation }}</li>
+{% endfor %}</ul>
+</main>
+</body>
+</html>

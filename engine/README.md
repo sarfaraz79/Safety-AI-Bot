@@ -55,6 +55,8 @@ An existing contract is never replaced without `--force`, because that would los
 | `llm.py` | The model connection |
 | `generate.py` | Writes questions from approved items |
 | `report.py`, `templates/` | Presents the verdicts and the numbers |
+| `health_check.py` | The short customer report, from verdicts and a person's review |
+| `evaluation.py` | Keeps a judge evaluation fair: a frozen judge, seen answers and two markers |
 | `compare.py` | Shows what a change made better or worse |
 | `judge_accuracy.py` | Measures the judge against a person's marks |
 | `judge_check.py` | Tries the judge on known answers |
@@ -259,8 +261,20 @@ A bot's reply is untrusted, and could contain a script. Everything on the page i
 
 ## Measuring the judge
 
-1. `audit-engine marking-sheet results.jsonl -o sheet.csv` picks a sample across every risk area, without looking at verdicts, and writes it as CSV. The sheet never shows the judge's verdict.
-2. Someone who didn't build the bot or the judge fills in `your_mark` with `pass`, `fail` or `unsure`.
-3. `audit-engine measure-judge results.jsonl --marks sheet.csv -o accuracy.json` shows how many real failures the judge caught and missed, how many good answers it failed, its agreement beyond chance, and a likely range for each figure. Under 100 marked answers, it says the figures can't be relied on.
+1. `audit-engine freeze-judge --model MODEL --revision COMMIT -o freeze.json` records exactly which judge the evaluation is about. Judge the answers after this.
+2. `audit-engine marking-sheet results.jsonl -o sheet.csv --one-per-test --ledger ledger.json` picks a sample across every risk area, without looking at verdicts, and leaves out answers already seen. The sheet never shows the judge's verdict.
+3. Two people who didn't build the bot or the judge each fill in `your_mark` with `pass`, `fail` or `unclear`, plus `your_severity` and `notes`, with no AI.
+4. `audit-engine compare-markers first.csv second.csv -o agreement.json --adjudication settle.csv` measures how far they agree, and lists disagreements for a third person to settle.
+5. `audit-engine measure-judge results.jsonl --marks first.csv --second-marks second.csv --adjudication settle.csv --freeze freeze.json --ledger ledger.json --markers-declared-no-ai -o accuracy.json` shows how many real failures the judge caught and missed, how many good answers it failed, a table of verdicts against marks, high-risk failures it passed, and a likely range for each figure.
+6. `audit-engine ledger-add results.jsonl --ledger ledger.json --purpose evaluation` records these answers as used, so they can't count as unseen again.
+
+Any missing step, such as a changed judge, answers already seen, one marker or no statement about AI, is listed, and the command says the figures aren't an independent evaluation. This relies on what people declare: code can't prove nobody used AI.
 
 Judges can do far worse on attacks than on ordinary answers, so accuracy must be measured on answers from these same tests, for each risk area.
+
+## The health check report
+
+`audit-engine health-check results.jsonl --review review.yaml -o check.html` writes a short customer report, with up to 20 agreed scenarios. Only failures a person marks `confirmed` in the review file appear as verified. Every test the software failed or left unclear needs a decision, and until then, or until every response has been reviewed, the report says it's a draft and the command exits with code 3. See [the example review](../examples/health-check-review.yaml).
+
+Use `audit-engine run tests.yaml --max-requests 60` so a mistake can't send more requests than agreed. The run stops before sending anything if it would go over.
+

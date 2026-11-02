@@ -342,3 +342,39 @@ def test_the_real_client_is_made_from_the_target() -> None:
     )
 
     assert isinstance(run_module.make_target_client(target, None), TargetClient)
+
+
+def test_a_run_over_the_agreed_limit_sends_nothing(
+    tests_file: Path, target_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    requests: list[httpx2.Request] = []
+
+    def bot(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return good_bot(request)
+
+    use_bot(monkeypatch, bot)
+    output = tmp_path / "out.jsonl"
+
+    result = run(
+        "run", tests_file, "--target", target_file, "-o", output, "--repeats", "3",
+        "--max-requests", "1",
+    )  # fmt: skip
+
+    assert result.exit_code == common.EXIT_FAILED
+    assert "over the limit of 1" in result.output
+    assert requests == []
+    assert not output.exists()
+
+
+def test_a_run_within_the_limit_goes_ahead(
+    tests_file: Path, target_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    use_bot(monkeypatch, good_bot)
+
+    result = run(
+        "run", tests_file, "--target", target_file, "-o", tmp_path / "out.jsonl",
+        "--max-requests", "100",
+    )  # fmt: skip
+
+    assert result.exit_code == 0

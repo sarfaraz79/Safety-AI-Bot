@@ -42,6 +42,7 @@ class TestSummary(BaseModel):
     counts: dict[Verdict, int]
     outcome: Outcome
     outcome_counts: dict[Outcome, int]
+    finished: bool  # every answer is usable and no chat stopped part way
     answers: int
     severity: Severity | None
     example: Example | None
@@ -162,7 +163,7 @@ def _metrics(
     outcomes = Counter(outcome_of(result) for result in results)
     usable = len(results) - outcomes["incomplete"]
     settled = [s for s in summaries if s.outcome != "incomplete"]
-    complete = [s for s in summaries if not s.outcome_counts.get("incomplete")]
+    complete = [s for s in summaries if s.finished]
     repeated = [s for s in summaries if s.answers > 1]
     inconsistent = [s for s in repeated if s.counts.get("fail") and s.counts.get("pass")]
     return Metrics(
@@ -236,9 +237,10 @@ def _summarise(answers: list[JudgedAnswer]) -> TestSummary:
         counts=dict(Counter(answer.verdict for answer in answers)),
         outcome=outcome,
         outcome_counts=dict(outcomes),
+        finished=not outcomes["incomplete"] and not any(a.failed_turn for a in answers),
         answers=sum(1 for answer in answers if answer.verdict != "not_run"),
         severity=_severity(case, fails) if fails else None,
-        example=_to_example(worst) if worst else None,
+        example=example_of(worst) if worst else None,
     )
 
 
@@ -250,7 +252,7 @@ def _test_outcome(outcomes: Counter[Outcome]) -> Outcome:
     return "pass"
 
 
-def _to_example(answer: JudgedAnswer) -> Example:
+def example_of(answer: JudgedAnswer) -> Example:
     return Example(
         attempt=answer.attempt,
         reply=answer.reply,

@@ -764,3 +764,10 @@ def test_a_fallback_reply_shows_as_incomplete_with_its_words_kept() -> None:
     assert "Incomplete (1)" in page
     assert "Sorry, please try again." in page
     assert "A listed fallback." in page
+
+
+def test_a_chat_that_stopped_isnt_counted_as_completed_even_when_it_failed() -> None:
+    built = report(answer(PACK, verdict="fail", reply=None, failed_turn=2), answer(FACT))
+
+    assert built.metrics.test_completion_percent == 50.0
+    assert not built.failed[0].finished
