@@ -26,7 +26,7 @@ answers:
     statement: Compensation is capped at £50 per item.
     expected_value: £50
     quote: capped at £50 per item
-  reply: The most you can get is £50.00 for each item.
+  reply: Compensation is capped at £50.00 per item, unless you bought Enhanced Cover when booking.
   captured:
     tool_calls: []
   acceptable:

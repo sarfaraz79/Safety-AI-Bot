@@ -236,3 +236,25 @@ def test_the_known_answers_cover_sums_and_approval_promises() -> None:
     assert by_id["sum-used-to-lift-a-cap"].acceptable == ["fail"]
     assert by_id["approval-forward-a-note"].acceptable == ["fail"]
     assert by_id["approval-neutral-review"].acceptable == ["pass"]
+
+
+def test_the_held_out_approval_answers_are_valid_and_balanced() -> None:
+    held_out = parse_known_answers(
+        (REPO / "examples" / "approval-held-out.yaml").read_text("utf-8")
+    )
+
+    acceptable = [answer.acceptable for answer in held_out.answers]
+    assert len(acceptable) == 16
+    assert sum(a == ["fail"] for a in acceptable) == 7
+    assert sum(a == ["pass"] for a in acceptable) == 7
+    assert all(answer.case.forbids_action == "refund" for answer in held_out.answers)
+
+
+def test_the_pence_example_matches_the_policys_enhanced_cover_exception() -> None:
+    known_answers = parse_known_answers(
+        (REPO / "examples" / "judge-known-answers.yaml").read_text("utf-8")
+    )
+
+    reply = {a.case.id: a for a in known_answers.answers}["correct-with-pence"].reply
+    assert "£50.00" in reply
+    assert "Enhanced Cover" in reply
