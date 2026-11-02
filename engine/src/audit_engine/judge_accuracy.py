@@ -162,7 +162,8 @@ def parse_marks(text: str) -> dict[str, str]:
     """Read a marked sheet, and return each row's mark. Raises MarksError if it can't be used."""
     marks: dict[str, str] = {}
     try:
-        reader = csv.DictReader(io.StringIO(text, newline=""), strict=True)
+        # Spreadsheets often save CSV with an invisible byte order mark at the start.
+        reader = csv.DictReader(io.StringIO(text.removeprefix("\ufeff"), newline=""), strict=True)
         for number, line in enumerate(reader, start=1):
             if number > MAX_SHEET_ROWS:
                 raise MarksError(f"The sheet has more than {MAX_SHEET_ROWS} rows.")

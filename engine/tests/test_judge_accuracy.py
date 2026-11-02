@@ -389,3 +389,7 @@ def test_a_sheet_exactly_at_the_limit_is_read(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr("audit_engine.judge_accuracy.MAX_SHEET_ROWS", 2)
 
     assert len(parse_marks("row,your_mark\nr1,pass\nr2,pass\n")) == 2
+
+
+def test_a_sheet_saved_by_a_spreadsheet_with_a_byte_order_mark_is_read() -> None:
+    assert parse_marks("\ufeffrow,your_mark\nr1,pass\n") == {"r1": "pass"}
