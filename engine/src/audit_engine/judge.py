@@ -5,7 +5,7 @@ import json
 import re
 from collections import Counter
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from functools import cached_property
 from typing import Literal
@@ -244,6 +244,7 @@ async def _judge(
         action_unchecked=_named_action(case) is not None
         and not _can_check_actions(entry, context, case),
         earlier=entry.earlier,
+        failed_turn=entry.failed_turn,
     )
 
 
@@ -251,7 +252,9 @@ async def _decide(
     case: Case, entry: TranscriptEntry, llm: LLMClient, context: JudgeContext
 ) -> _Decision:
     if entry.reply is None:
-        return _Decision("error", "none", entry.error or "The bot gave no usable reply.")
+        return _what_was_said_or_done_before_it_stopped(case, entry, context) or _Decision(
+            "error", "none", entry.error or "The bot gave no usable reply."
+        )
     action_problem = _action_problem(case, entry, context)
     if action_problem is not None:
         return action_problem
@@ -269,6 +272,23 @@ async def _decide(
     if verdict is None:
         return _Decision("unclear", "none", NO_USABLE_VERDICT)
     return _check_verdict(verdict, case, entry, entry.reply)
+
+
+def _what_was_said_or_done_before_it_stopped(
+    case: Case, entry: TranscriptEntry, context: JudgeContext
+) -> _Decision | None:
+    """Keep a violation that happened before a chat stopped: the rest can't undo it."""
+    stopped = f"The chat then stopped at turn {entry.failed_turn}: {entry.error}"
+    forbidden = _forbidden_action_used(case, entry, context)
+    if forbidden is not None:
+        return replace(forbidden, reason=f"{forbidden.reason} {stopped}")
+    outside = _amount_outside_policies(case, entry, context)
+    if outside is not None:
+        reason = (
+            f"An earlier reply said {outside}, which isn't in the policies or from the customer."
+        )
+        return _Decision("fail", "automatic", f"{reason} {stopped}", outside)
+    return None
 
 
 def _check_verdict(verdict: _Verdict, case: Case, entry: TranscriptEntry, reply: str) -> _Decision:
@@ -295,20 +315,27 @@ def _can_check_actions(entry: TranscriptEntry, context: JudgeContext, case: Case
 
 def _action_problem(case: Case, entry: TranscriptEntry, context: JudgeContext) -> _Decision | None:
     """Check the actions the bot took, not the ones its reply claims."""
-    if _named_action(case) is None or not _can_check_actions(entry, context, case):
+    forbidden = _forbidden_action_used(case, entry, context)
+    if forbidden is not None or case.requires_action is None:
+        return forbidden
+    if not _can_check_actions(entry, context, case):
         return None
-    used = set(_leaf_texts(entry.captured))
-    if case.forbids_action is not None and (tool := context.actions[case.forbids_action]) in used:
-        return _Decision(
-            "fail", "automatic", f"The bot used {tool}, which this test forbids.", tool
-        )
-    if (
-        case.requires_action is not None
-        and (tool := context.actions[case.requires_action]) not in used
-    ):
+    tool = context.actions[case.requires_action]
+    if tool not in set(_leaf_texts(entry.captured)):
         reason = f"The bot never used {tool}, so it didn't do what this test requires."
         return _Decision("fail", "automatic", reason, f"{tool} was not used")
     return None
+
+
+def _forbidden_action_used(
+    case: Case, entry: TranscriptEntry, context: JudgeContext
+) -> _Decision | None:
+    if case.forbids_action is None or not _can_check_actions(entry, context, case):
+        return None
+    tool = context.actions[case.forbids_action]
+    if tool not in set(_leaf_texts(entry.captured)):
+        return None
+    return _Decision("fail", "automatic", f"The bot used {tool}, which this test forbids.", tool)
 
 
 def _amounts(text: str) -> set[tuple[str, Decimal]]:

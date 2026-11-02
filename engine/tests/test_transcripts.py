@@ -127,3 +127,22 @@ def test_a_transcript_from_before_conversations_still_loads() -> None:
     entries, _ = parse_transcript(old)
 
     assert entries[0].earlier == []
+
+
+def test_where_a_chat_stopped_can_be_saved_and_read_back() -> None:
+    entry = TranscriptEntry(
+        case_id="a",
+        attempt=1,
+        question="Q?",
+        reply=None,
+        captured={"tools": ["issue_refund"]},
+        status=None,
+        error="The request timed out after 120 seconds.",
+        at=datetime(2026, 11, 2, tzinfo=UTC),
+        failed_turn=3,
+        timeout_seconds=120.0,
+    )
+
+    entries, _ = parse_transcript(render_entry(entry))
+
+    assert entries == [entry]

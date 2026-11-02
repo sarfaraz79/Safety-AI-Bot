@@ -30,6 +30,7 @@ class Example(BaseModel):
     actions: dict[str, Any]
     decided_by: str
     earlier: list[Turn]
+    failed_turn: int | None
 
 
 class TestSummary(BaseModel):
@@ -242,6 +243,7 @@ def _to_example(answer: JudgedAnswer) -> Example:
         actions=_actions(answer),
         decided_by=answer.decided_by,
         earlier=answer.earlier,
+        failed_turn=answer.failed_turn,
     )
 
 

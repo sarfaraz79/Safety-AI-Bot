@@ -219,3 +219,24 @@ async def test_answered_and_failed_are_counted_separately() -> None:
     )
 
     assert (summary.answered, summary.failed) == (2, 1)
+
+
+async def test_where_a_chat_stopped_and_the_limit_reach_the_transcript() -> None:
+    async def stops(question: str, _earlier: Sequence[str] = ()) -> Answer:
+        return Answer(
+            reply=None,
+            captured={"tools": ["issue_refund"]},
+            status=None,
+            error=f"Timed out on {question}",
+            earlier=(Turn(customer="First?", bot="One"),),
+            failed_turn=2,
+            timeout_seconds=120.0,
+        )
+
+    entries: list[TranscriptEntry] = []
+
+    await run_cases([case(1)], stops, entries.append, RunLimits(1, 1, 100.0))
+
+    assert entries[0].failed_turn == 2
+    assert entries[0].timeout_seconds == 120.0
+    assert entries[0].captured == {"tools": ["issue_refund"]}

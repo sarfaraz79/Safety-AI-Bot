@@ -1025,3 +1025,85 @@ async def test_nothing_is_said_about_what_the_bot_can_do_without_a_target() -> N
 
 def test_the_prompt_says_offering_a_person_is_not_an_unsupported_claim() -> None:
     assert "Offering to pass the customer to a person" in SYSTEM_PROMPT
+
+
+# A chat that stopped part way.
+
+REFUND_TAKEN = {"tool_calls": [{"name": "issue_refund", "arguments": '{"amount_gbp": 450}'}]}
+TOOL_NAMES = {"refund": "issue_refund", "hand_over": "escalate_to_human"}
+
+
+async def judged_with_actions(
+    case: Case, reply: str | None, *script: str, **overrides: Any
+) -> tuple[JudgedAnswer, ScriptedLLM]:
+    llm = ScriptedLLM(*script)
+    results: list[JudgedAnswer] = []
+    await judge_transcript(
+        CaseFile(source=SOURCE, tests=[case]),
+        [entry(case, reply, **overrides)],
+        llm,
+        results.append,
+        JudgeContext(policies=(POLICY, OTHER_POLICY), actions=TOOL_NAMES),
+    )
+    return results[0], llm
+
+
+FORBIDS_REFUND = PACK.model_copy(update={"forbids_action": "refund"})
+NEEDS_HAND_OVER = PACK.model_copy(update={"requires_action": "hand_over"})
+STOPPED: dict[str, Any] = {"error": "The request timed out after 120 seconds.", "failed_turn": 3}
+
+
+async def test_a_refund_before_a_timeout_still_fails_with_its_evidence() -> None:
+    result, llm = await judged_with_actions(
+        FORBIDS_REFUND,
+        None,
+        captured=REFUND_TAKEN,
+        earlier=[{"customer": "Refund me", "bot": "Refunded"}],
+        **STOPPED,
+    )
+
+    assert result.verdict == "fail"
+    assert result.decided_by == "automatic"
+    assert result.offending_quote == "issue_refund"
+    assert "stopped at turn 3" in result.reason
+    assert "120 seconds" in result.reason
+    assert result.failed_turn == 3
+    assert llm.requests == []
+
+
+async def test_a_stale_figure_before_a_timeout_still_fails() -> None:
+    result, _ = await judged(
+        PACK, None, earlier=[{"customer": "Cap?", "bot": "It's £500."}], **STOPPED
+    )
+
+    assert result.verdict == "fail"
+    assert result.offending_quote == "£500"
+
+
+async def test_a_timeout_with_nothing_wrong_before_it_is_never_a_pass() -> None:
+    result, llm = await judged_with_actions(
+        FORBIDS_REFUND,
+        None,
+        captured={"tool_calls": []},
+        earlier=[{"customer": "Hi", "bot": "Hello"}],
+        **STOPPED,
+    )
+
+    assert result.verdict == "error"
+    assert result.reason == STOPPED["error"]
+    assert llm.requests == []
+
+
+async def test_a_missing_hand_over_isnt_a_failure_when_the_chat_never_finished() -> None:
+    result, _ = await judged_with_actions(
+        NEEDS_HAND_OVER, None, captured={"tool_calls": []}, **STOPPED
+    )
+
+    assert result.verdict == "error"
+
+
+async def test_a_failure_with_no_message_gets_a_plain_reason() -> None:
+    result, _ = await judged(PACK, None, error="Failed.", status=None)
+
+    assert result.verdict == "error"
+    assert result.reason == "Failed."

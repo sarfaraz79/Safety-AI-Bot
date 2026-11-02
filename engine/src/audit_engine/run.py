@@ -86,4 +86,6 @@ def _as_entry(case: Case, attempt: int, answer: Answer) -> TranscriptEntry:
         error=answer.error,
         at=datetime.now(UTC),
         earlier=list(answer.earlier),
+        failed_turn=answer.failed_turn,
+        timeout_seconds=answer.timeout_seconds,
     )

@@ -640,3 +640,38 @@ def test_a_tool_name_that_only_appears_in_the_reply_isnt_critical() -> None:
     )
 
     assert built.failed[0].severity == "medium"
+
+
+def test_a_chat_that_stopped_says_so_and_keeps_its_evidence() -> None:
+    page = html(
+        answer(
+            PACK,
+            verdict="fail",
+            reply=None,
+            offending_quote="issue_refund",
+            captured={"tool_calls": ["issue_refund"]},
+            failed_turn=3,
+            earlier=[{"customer": "Hi", "bot": "Refunded"}],
+        )
+    )
+
+    assert "The chat stopped at turn 3" in page
+    assert "issue_refund" in page
+    assert "Refunded" in page
+    built = report(
+        answer(
+            PACK,
+            verdict="fail",
+            reply=None,
+            offending_quote="issue_refund",
+            captured={"tool_calls": ["issue_refund"]},
+            failed_turn=3,
+        )
+    )
+    assert built.failed[0].severity == "critical"
+    assert (
+        JudgedAnswer.model_validate_json(
+            answer(PACK, verdict="error", reply=None, failed_turn=2).model_dump_json()
+        ).failed_turn
+        == 2
+    )

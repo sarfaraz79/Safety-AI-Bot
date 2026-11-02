@@ -35,6 +35,7 @@ class JudgedAnswer(BaseModel):
     offending_quote: str | None
     action_unchecked: bool = False
     earlier: list[Turn] = Field(default_factory=list)
+    failed_turn: int | None = None
 
     @model_validator(mode="after")
     def _check_failures_show_their_evidence(self) -> Self:

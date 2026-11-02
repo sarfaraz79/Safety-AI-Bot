@@ -76,6 +76,10 @@
     {% for turn in summary.example.earlier %}<dd>Customer: {{ turn.customer }}<br>Bot: {{ turn.bot }}</dd>
     {% endfor %}
     {% endif %}
+    {% if summary.example.failed_turn %}
+    <dt>Incomplete</dt>
+    <dd>The chat stopped at turn {{ summary.example.failed_turn }}. What came before it is kept as evidence.</dd>
+    {% endif %}
     {% if summary.example.reply is not none %}
     <dt>Bot replied</dt>
     <dd>{{ summary.example.reply }}</dd>

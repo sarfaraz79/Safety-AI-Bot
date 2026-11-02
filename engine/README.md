@@ -168,7 +168,7 @@ tests:
 
  Questions can need details about the company being tested, such as `{{competitor}}`. A test missing a value is reported as skipped, never silently dropped.
 
-A test can hold `earlier` messages, which the customer says one at a time before the question. What the bot did on every turn is kept, so a refund in an early turn can't be missed. The bot needs a target with `{{conversation}}`, or those tests are recorded as failed requests.
+A test can hold `earlier` messages, which the customer says one at a time before the question. What the bot did on every turn is kept, even if a later turn fails, so a refund in an early turn can't be missed. A forbidden action or an amount outside the policies before the chat stopped still fails the test. The bot needs a target with `{{conversation}}`, or those tests are recorded as failed requests.
 
 ## Writing the questions
 
@@ -196,7 +196,7 @@ A target file describes how to reach any bot with a web endpoint, so testing a n
 | `capture` | Anything else worth keeping, such as `tool_calls`, so tests can check what a bot did |
 | `actions` | What this bot's tools are called, such as `hand_over: escalate_to_human`, so tests can check it really did something |
 | `token_env` | The name of an environment variable holding a token. Never the token itself |
-| `timeout_seconds` | How long to wait for the whole response, 60 by default |
+| `timeout_seconds` | How long to wait for each message's whole response, 60 by default. The limit applies per message, so a chat of three messages can take three times as long. Going over it is recorded as a failed request, never a pass |
 
 A bot is treated as untrusted. Redirects are never followed, so a bot can't send the token elsewhere. Responses over 1 MB are cut off. Timeouts, bad JSON, error codes and missing replies all become recorded failures, never crashes.
 

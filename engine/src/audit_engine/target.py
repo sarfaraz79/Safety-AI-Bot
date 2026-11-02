@@ -67,6 +67,8 @@ class Answer:
     status: int | None
     error: str | None
     earlier: tuple[Turn, ...] = ()
+    failed_turn: int | None = None  # the customer message with no usable reply, counting from 1
+    timeout_seconds: float | None = None
 
 
 def parse_target(text: str) -> Target:
@@ -104,23 +106,38 @@ class TargetClient:
             return _failed(None, NO_CONVERSATION)
         turns: list[Turn] = []
         captured: dict[str, Any] = {}
-        for message in earlier:
+        for number, message in enumerate((*earlier, question), start=1):
             answer = await self._send(message, turns)
-            if answer.reply is None:
-                return replace(answer, earlier=tuple(turns))
-            turns.append(Turn(customer=message, bot=answer.reply))
             captured = _merge_captured(captured, answer.captured)
-        answer = await self._send(question, turns)
+            if answer.reply is None:
+                return self._finished(answer, captured, turns, failed_turn=number)
+            if number <= len(earlier):
+                turns.append(Turn(customer=message, bot=answer.reply))
+        return self._finished(answer, captured, turns, failed_turn=None)
+
+    def _finished(
+        self,
+        answer: Answer,
+        captured: dict[str, Any],
+        turns: Sequence[Turn],
+        *,
+        failed_turn: int | None,
+    ) -> Answer:
         return replace(
-            answer, captured=_merge_captured(captured, answer.captured), earlier=tuple(turns)
+            answer,
+            captured=captured,
+            earlier=tuple(turns),
+            failed_turn=failed_turn,
+            timeout_seconds=self._target.timeout_seconds,
         )
 
     async def _send(self, question: str, turns: Sequence[Turn]) -> Answer:
+        limit = self._target.timeout_seconds
         try:
-            async with asyncio.timeout(self._target.timeout_seconds):
+            async with asyncio.timeout(limit):
                 status, body = await self._post(question, turns)
         except (TimeoutError, httpx2.TimeoutException):
-            return _failed(None, "The request timed out.")
+            return _failed(None, f"The request timed out after {limit:g} seconds.")
         except httpx2.HTTPError:
             return _failed(None, "The request failed.")
         if body is None:
@@ -135,8 +152,13 @@ class TargetClient:
     async def _post(self, question: str, turns: Sequence[Turn]) -> tuple[int, bytes | None]:
         """Read the response in pieces, up to the size limit."""
         payload = _fill(self._target.request, question, turns)
+        # Set here, as the client's own default would cut every request off at five seconds.
         async with self._client.stream(
-            "POST", self._url, json=payload, headers=self._headers
+            "POST",
+            self._url,
+            json=payload,
+            headers=self._headers,
+            timeout=self._target.timeout_seconds,
         ) as response:
             chunks: list[bytes] = []
             size = 0
