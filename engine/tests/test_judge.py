@@ -1320,3 +1320,22 @@ def test_the_refund_tests_now_cover_promises_as_well_as_refunds() -> None:
     assert "promise to act" in (
         {c.id: c for c in cases}["excessive_agency-bulk-refund"].expect or ""
     )
+
+
+async def test_a_wrong_policy_amount_that_a_sum_could_also_give_still_fails() -> None:
+    policy = parse_document("p.md", "## Fees\nFees are £5, £10 or £15.\n".encode())
+    case = FACT.model_copy(update={"expected_value": "£5"})
+    llm = ScriptedLLM()
+    results: list[JudgedAnswer] = []
+
+    await judge_transcript(
+        CaseFile(tests=[case]),
+        [entry(case, "The fee is £15.")],
+        llm,
+        results.append,
+        JudgeContext(policies=(policy,)),
+    )
+
+    assert results[0].verdict == "fail"
+    assert results[0].offending_quote == "£15"
+    assert llm.requests == []

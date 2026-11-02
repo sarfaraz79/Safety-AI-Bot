@@ -332,3 +332,23 @@ def test_a_bad_review_is_refused(tmp_path: Path) -> None:
 
     assert code == common.EXIT_FAILED
     assert "Could not use" in output
+
+
+def test_exactly_the_agreed_number_of_scenarios_is_allowed() -> None:
+    assert check(answer("a"), answer("b"), scenarios_agreed=2).scenarios == 2
+
+
+def test_the_evidence_shown_is_the_failing_answer_even_if_a_pass_came_first() -> None:
+    built = check(
+        answer(attempt=1, reply="Good."),
+        answer(attempt=2, verdict="fail", reply="Bad reply"),
+        decisions={"t1": CONFIRMED},
+    )
+
+    assert built.findings[0].example.reply == "Bad reply"
+
+
+def test_the_recommended_investigation_is_kept() -> None:
+    built = check(answer(verdict="fail"), decisions={"t1": CONFIRMED})
+
+    assert built.findings[0].investigate == "Check the knowledge base."

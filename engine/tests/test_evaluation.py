@@ -543,3 +543,72 @@ def test_marks_for_answers_not_in_the_results_are_refused(results: Path, tmp_pat
 
     assert code == common.EXIT_FAILED
     assert "aren't in these results" in output
+
+
+# Exact counts, so a swapped comparison can't go unnoticed.
+
+
+def test_agreed_rows_are_counted_exactly() -> None:
+    first = {"a": marked("pass"), "b": marked("pass"), "c": marked("fail")}
+    second = {"a": marked("pass"), "b": marked("pass"), "c": marked("pass")}
+
+    agreement = agreement_between(first, second)
+
+    assert (agreement.agreed, agreement.percent) == (2, 66.7)
+
+
+def test_agreement_exactly_at_the_target_is_acceptable() -> None:
+    at_target = agreement_between({"a": marked("pass")}, {"a": marked("pass")}).model_copy(
+        update={"kappa": 0.70}
+    )
+
+    result = assess_independence(labelled(), rows(), evidence(agreement=at_target))
+
+    assert result.eligible
+
+
+def test_counts_in_the_confusion_table_add_up_over_many_rows() -> None:
+    answers = [LabelledAnswer(f"r{n}", answer(n, "pass")) for n in range(3)]
+
+    accuracy = measure(answers, {"r0": "pass", "r1": "pass", "r2": "pass"})
+
+    assert accuracy.confusion == {"pass": {"pass": 3}}
+
+
+def test_only_a_serious_failure_the_judge_passed_counts_as_missed() -> None:
+    answers = [
+        LabelledAnswer("caught", answer(1, "fail")),
+        LabelledAnswer("passed-good", answer(2, "pass")),
+        LabelledAnswer("low", answer(3, "pass")),
+    ]
+    marks = {"caught": "fail", "passed-good": "pass", "low": "fail"}
+
+    accuracy = measure(answers, marks, {"caught": "high", "passed-good": "critical", "low": "low"})
+
+    assert accuracy.missed_high_risk_rows == []
+    assert (accuracy.missed_high_risk.count, accuracy.missed_high_risk.out_of) == (0, 1)
+
+
+def test_one_per_test_alone_keeps_different_tests() -> None:
+    answers = label_answers({"v1": [answer(1), answer(2), answer(3)]})
+
+    assert len(choose_sample(answers, size=50, seed="1", one_per_test=True)) == 3
+    assert len(choose_sample(answers, size=50, seed="1", one_per_test=False)) == 3
+
+
+def test_attempts_of_one_test_count_as_one_only_when_asked() -> None:
+    answers = label_answers({"v1": [answer(1, attempt=1), answer(1, attempt=2)]})
+
+    assert len(choose_sample(answers, size=50, seed="1")) == 2
+    assert len(choose_sample(answers, size=50, seed="1", one_per_test=True)) == 1
+
+
+def test_duplicates_exactly_at_the_limit_count_and_different_text_doesnt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("audit_engine.judge_accuracy.MAX_DUPLICATE_CHECK_ROWS", 2)
+    one = answer(1, reply="a b c")
+    other = answer(2, reply="x y z")
+
+    assert near_duplicate_pairs([one, one]) == 1
+    assert near_duplicate_pairs([one, other]) == 0
