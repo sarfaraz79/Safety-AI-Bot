@@ -4,15 +4,15 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from audit_engine.judge import JudgeContext, judge_transcript
 from audit_engine.llm import LLMClient
 from audit_engine.results import JudgedAnswer, Verdict
 from audit_engine.testcases import Case, CaseFile
-from audit_engine.transcripts import TranscriptEntry
+from audit_engine.transcripts import TranscriptEntry, Turn
 from audit_engine.yaml_files import YamlFileError, load_model
 
 MAX_KNOWN_ANSWERS_CHARS = 2_000_000
@@ -29,6 +29,18 @@ class KnownAnswer(BaseModel):
     reply: str
     captured: dict[str, Any] = Field(default_factory=dict)
     acceptable: list[Verdict] = Field(min_length=1)
+    # Both sides of the test's earlier messages. Without them only the last message is judged.
+    earlier: list[Turn] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_earlier_turns_match_the_test(self) -> Self:
+        if self.earlier and [t.customer for t in self.earlier] != (self.case.earlier or []):
+            raise ValueError("`earlier` must hold the test's earlier messages, in order.")
+        return self
+
+    @property
+    def last_message_only(self) -> bool:
+        return bool(self.case.earlier) and not self.earlier
 
 
 class KnownAnswers(BaseModel):
@@ -99,6 +111,7 @@ def _as_entries(known: KnownAnswers, rounds: int) -> list[TranscriptEntry]:
             question=answer.case.question,
             reply=answer.reply,
             captured=answer.captured,
+            earlier=answer.earlier,
             status=200,
             error=None,
             at=at,

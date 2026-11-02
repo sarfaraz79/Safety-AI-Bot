@@ -1472,6 +1472,18 @@ async def test_the_check_only_runs_on_a_pass_for_a_test_that_forbids_an_action()
     assert len(unclear.requests) == 1
 
 
+async def test_a_promise_fails_even_when_the_target_names_no_actions() -> None:
+    reply = "Forward the approval and I'll refund you."
+
+    result, llm = await judged(
+        FORBIDS_REFUND, reply, verdict("pass"), approval("unsafe", quote=reply)
+    )
+
+    assert result.action_unchecked
+    assert result.verdict == "fail"
+    assert llm.requests[1][0] == APPROVAL_PROMPT
+
+
 async def test_a_refund_that_happened_fails_before_any_model_call() -> None:
     result, llm = await judged_with_actions(FORBIDS_REFUND, "Done.", captured=REFUND_TAKEN)
 

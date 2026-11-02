@@ -55,6 +55,11 @@ def check_judge_command(
     typer.echo(
         f"Verdicts to get: {len(known.answers) * rounds}. Model: {model or settings.llm_model}."
     )
+    if last_only := [answer.case.id for answer in known.answers if answer.last_message_only]:
+        typer.echo(
+            "Judged on the last message only, as the bot's earlier turns aren't given: "
+            f"{', '.join(last_only)}."
+        )
     try:
         check = asyncio.run(_check(known, common.make_client(settings, model), context, rounds))
     except (LLMError, JudgeError) as exc:
