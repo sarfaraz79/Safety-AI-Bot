@@ -25,18 +25,20 @@
 
 <section class="totals" aria-label="Totals">
   <div class="total"><b>{{ report.totals.tests }}</b><span>Tests</span></div>
-  <div class="total"><b>{{ report.totals.counts.get("fail", 0) }}</b><span>Failed answers</span></div>
-  <div class="total"><b>{{ report.totals.counts.get("pass", 0) }}</b><span>Passed answers</span></div>
-  <div class="total"><b>{{ report.totals.counts.get("unclear", 0) }}</b><span>For a person to check</span></div>
-  <div class="total"><b>{{ report.totals.counts.get("error", 0) + report.totals.counts.get("not_run", 0) }}</b><span>Not judged</span></div>
+  <div class="total"><b>{{ report.totals.outcomes.get("fail", 0) }}</b><span>Failed answers</span></div>
+  <div class="total"><b>{{ report.totals.outcomes.get("pass", 0) }}</b><span>Passed answers</span></div>
+  <div class="total"><b>{{ report.totals.outcomes.get("unclear", 0) }}</b><span>Unclear, for a person to check</span></div>
+  <div class="total"><b>{{ report.totals.outcomes.get("incomplete", 0) }}</b><span>Incomplete</span></div>
 </section>
 
 <h2>The numbers</h2>
 <table class="numbers">
-  <tr><th>Tests fully passed</th><td>{{ report.metrics.test_pass_percent }}% ({{ report.passed | length }} of {{ report.totals.tests }})</td></tr>
-  <tr><th>Answers passed</th><td>{{ report.metrics.answer_pass_percent }}% of {{ report.totals.answers }}</td></tr>
-  <tr><th>Answers for a person to check</th><td>{{ report.metrics.needs_person_percent }}%</td></tr>
-  <tr><th>Answers not judged</th><td>{{ report.metrics.not_judged_percent }}%</td></tr>
+  <tr><th>Tests completed, with every answer usable</th><td>{{ report.metrics.test_completion_percent }}%</td></tr>
+  <tr><th>Tests fully passed, of those with a settled result</th><td>{{ report.metrics.test_pass_percent }}% ({{ report.passed | length }} of {{ report.totals.tests - report.incomplete | length }})</td></tr>
+  <tr><th>Answers usable</th><td>{{ report.metrics.answer_completion_percent }}% of {{ report.totals.answers }}</td></tr>
+  <tr><th>Answers passed, of those usable</th><td>{{ report.metrics.answer_pass_percent }}%</td></tr>
+  <tr><th>Usable answers for a person to check</th><td>{{ report.metrics.needs_person_percent }}%</td></tr>
+  <tr><th>Answers incomplete</th><td>{{ report.metrics.incomplete_percent }}%</td></tr>
   <tr><th>Answers decided by code, with no AI</th><td>{{ report.metrics.decided_by_code_percent }}%</td></tr>
   {% if report.metrics.repeated_tests %}
   <tr><th>Asked more than once, with both passes and fails</th><td>{{ report.metrics.inconsistent_percent }}% ({{ report.metrics.inconsistent_tests }} of {{ report.metrics.repeated_tests }} tests)</td></tr>
@@ -44,6 +46,10 @@
   <tr><th>Failed tests by severity</th><td>Critical {{ report.metrics.severities.get("critical", 0) }}, high {{ report.metrics.severities.get("high", 0) }}, medium {{ report.metrics.severities.get("medium", 0) }}</td></tr>
   {% if report.metrics.coverage %}
   <tr><th>Approved policy items tested</th><td>{{ report.metrics.coverage.percent }}% ({{ report.metrics.coverage.tested_items }} of {{ report.metrics.coverage.approved_items }}){% if report.metrics.coverage.unapproved_items %}. {{ report.metrics.coverage.unapproved_items }} more weren't approved, so weren't tested{% endif %}</td></tr>
+  <tr><th>Approved policy items with every answer usable</th><td>{{ report.metrics.coverage.fully_tested_percent }}% ({{ report.metrics.coverage.fully_tested_items }} of {{ report.metrics.coverage.approved_items }})</td></tr>
+  {% if report.metrics.coverage.partly_tested %}
+  <tr><th>Approved items only partly tested</th><td>{{ report.metrics.coverage.partly_tested | join(", ") }}</td></tr>
+  {% endif %}
   {% if report.metrics.coverage.untested %}
   <tr><th>Approved items not tested</th><td>{{ report.metrics.coverage.untested | join(", ") }}</td></tr>
   {% endif %}
@@ -55,9 +61,9 @@
 
 <h2>By risk area</h2>
 <table class="numbers">
-  <tr><th>Area</th><td><b>Passed</b></td><td><b>Failed</b></td><td><b>For a person</b></td><td><b>Not judged</b></td><td><b>Pass rate</b></td></tr>
+  <tr><th>Area</th><td><b>Passed</b></td><td><b>Failed</b></td><td><b>For a person</b></td><td><b>Incomplete</b></td><td><b>Pass rate</b></td></tr>
   {% for area in report.metrics.areas %}
-  <tr><th>{{ area.area }}</th><td>{{ area.passed }}</td><td>{{ area.failed }}</td><td>{{ area.unclear }}</td><td>{{ area.not_judged }}</td><td>{{ area.pass_percent }}%</td></tr>
+  <tr><th>{{ area.area }}</th><td>{{ area.passed }}</td><td>{{ area.failed }}</td><td>{{ area.unclear }}</td><td>{{ area.incomplete }}</td><td>{{ area.pass_percent }}%</td></tr>
   {% endfor %}
 </table>
 
@@ -107,7 +113,7 @@
     {% endif %}
     {% if verdict %}
     <dt>How often</dt>
-    <dd>{{ summary.counts.get(verdict, 0) }} of {{ summary.answers }} answers</dd>
+    <dd>{{ summary.outcome_counts.get(verdict, 0) }} of {{ summary.outcome_counts.values() | sum }} answers</dd>
     {% endif %}
   </dl>
 </article>
@@ -123,9 +129,10 @@
 {% for summary in report.unclear %}{{ show(summary, "unclear") }}{% endfor %}
 {% endif %}
 
-{% if report.gaps %}
-<h2>Not judged ({{ report.gaps | length }})</h2>
-{% for summary in report.gaps %}{{ show(summary, none) }}{% endfor %}
+{% if report.incomplete %}
+<h2>Incomplete ({{ report.incomplete | length }})</h2>
+<p class="meta">These have no settled result: a request failed, the bot gave a known fallback, or the judge gave no usable verdict. They aren't passes or failures.</p>
+{% for summary in report.incomplete %}{{ show(summary, "incomplete") }}{% endfor %}
 {% endif %}
 
 <h2>Passed tests ({{ report.passed | length }})</h2>

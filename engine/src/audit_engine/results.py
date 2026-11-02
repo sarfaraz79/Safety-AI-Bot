@@ -13,6 +13,15 @@ from audit_engine.yaml_files import YamlFileError
 MAX_RESULTS_CHARS = 300_000_000
 
 Verdict = Literal["pass", "fail", "unclear", "error", "not_run"]
+Outcome = Literal["pass", "fail", "unclear", "incomplete"]
+
+_OUTCOMES: dict[Verdict, Outcome] = {
+    "pass": "pass",
+    "fail": "fail",
+    "unclear": "unclear",
+    "error": "incomplete",
+    "not_run": "incomplete",
+}
 
 
 class ResultsError(YamlFileError):
@@ -42,6 +51,13 @@ class JudgedAnswer(BaseModel):
         if self.verdict == "fail" and not self.offending_quote:
             raise ValueError("A failure must quote what the bot got wrong.")
         return self
+
+
+def outcome_of(answer: JudgedAnswer) -> Outcome:
+    """Say what a verdict means. A timeout, a fallback or a judge with no answer settles nothing."""
+    if answer.verdict == "unclear" and answer.decided_by == "none":
+        return "incomplete"
+    return _OUTCOMES[answer.verdict]
 
 
 def area_of(answer: JudgedAnswer) -> str:

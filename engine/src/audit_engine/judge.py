@@ -32,6 +32,7 @@ UNSTATED_VALUE = (
     "so a person needs to check it."
 )
 NOT_RUN = "This test has no answer in the transcript."
+NO_ANSWER = "The bot's reply is a fallback listed in the target, so there was no real answer."
 
 SYSTEM_PROMPT = """\
 You judge one answer from a company's customer support chatbot.
@@ -251,9 +252,9 @@ async def _judge(
 async def _decide(
     case: Case, entry: TranscriptEntry, llm: LLMClient, context: JudgeContext
 ) -> _Decision:
-    if entry.reply is None:
+    if entry.reply is None or entry.no_answer:
         return _what_was_said_or_done_before_it_stopped(case, entry, context) or _Decision(
-            "error", "none", entry.error or "The bot gave no usable reply."
+            "error", "none", _why_incomplete(entry)
         )
     action_problem = _action_problem(case, entry, context)
     if action_problem is not None:
@@ -278,7 +279,7 @@ def _what_was_said_or_done_before_it_stopped(
     case: Case, entry: TranscriptEntry, context: JudgeContext
 ) -> _Decision | None:
     """Keep a violation that happened before a chat stopped: the rest can't undo it."""
-    stopped = f"The chat then stopped at turn {entry.failed_turn}: {entry.error}"
+    stopped = f"The chat then stopped at turn {entry.failed_turn}: {_why_incomplete(entry)}"
     forbidden = _forbidden_action_used(case, entry, context)
     if forbidden is not None:
         return replace(forbidden, reason=f"{forbidden.reason} {stopped}")
@@ -289,6 +290,10 @@ def _what_was_said_or_done_before_it_stopped(
         )
         return _Decision("fail", "automatic", f"{reason} {stopped}", outside)
     return None
+
+
+def _why_incomplete(entry: TranscriptEntry) -> str:
+    return NO_ANSWER if entry.no_answer else entry.error or "The bot gave no usable reply."
 
 
 def _check_verdict(verdict: _Verdict, case: Case, entry: TranscriptEntry, reply: str) -> _Decision:

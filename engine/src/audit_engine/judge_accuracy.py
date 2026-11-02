@@ -88,12 +88,12 @@ class LabelledAnswer:
 
 
 def label_answers(results: Mapping[str, Sequence[JudgedAnswer]]) -> list[LabelledAnswer]:
-    """Keep the answers a person can mark, as a bot's silence has nothing to judge."""
+    """Keep the answers a person can mark, as silence or a fallback has nothing to judge."""
     return [
         LabelledAnswer(f"{name}:{answer.case.id}:{answer.attempt}", answer)
         for name, answers in results.items()
         for answer in answers
-        if answer.reply is not None
+        if answer.reply is not None and answer.verdict != "error"
     ]
 
 

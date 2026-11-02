@@ -11,7 +11,7 @@ from audit_engine.compare import compare_reports, render_html, render_json
 from audit_engine.report import Report, build_report
 from audit_engine.results import MAX_RESULTS_CHARS, ResultsError, parse_results
 
-EXIT_GOT_WORSE = 4
+EXIT_NEWLY_FAILING = 4
 
 
 def compare_command(
@@ -29,17 +29,19 @@ def compare_command(
     common.write_results(data_path, render_json(comparison))
     typer.echo(
         f"Comparison written to {output}, with its data in {data_path}. "
-        f"Got worse: {len(comparison.got_worse)}. Got better: {len(comparison.got_better)}. "
-        f"Still failing: {len(comparison.still_failing)}."
+        f"Newly failing: {len(comparison.newly_failing)}. "
+        f"Newly passing: {len(comparison.newly_passing)}. "
+        f"Still failing: {len(comparison.still_failing)}. "
+        f"Still passing: {comparison.still_passing}. "
+        f"Can't be compared: {len(comparison.not_comparable)}."
     )
     if comparison.reworded_tests:
         typer.echo(
-            f"Tests that can't be compared, as their question changed: "
-            f"{len(comparison.reworded_tests)}.",
+            f"Tests left out, as their question changed: {len(comparison.reworded_tests)}.",
             err=True,
         )
-    if comparison.got_worse:
-        raise typer.Exit(EXIT_GOT_WORSE)
+    if comparison.newly_failing:
+        raise typer.Exit(EXIT_NEWLY_FAILING)
 
 
 def _read(path: Path, now: datetime) -> Report:

@@ -7,6 +7,7 @@ from audit_engine.results import (
     MAX_RESULTS_CHARS,
     JudgedAnswer,
     ResultsError,
+    outcome_of,
     parse_results,
     render_result,
 )
@@ -82,3 +83,38 @@ def test_damage_is_refused_naming_the_line() -> None:
 def test_an_oversized_file_is_refused() -> None:
     with pytest.raises(ResultsError, match="longer than"):
         parse_results("x" * (MAX_RESULTS_CHARS + 1))
+
+
+@pytest.mark.parametrize(
+    ("verdict", "decided_by", "outcome"),
+    [
+        ("pass", "model", "pass"),
+        ("fail", "automatic", "fail"),
+        ("unclear", "model", "unclear"),
+        ("unclear", "none", "incomplete"),
+        ("error", "none", "incomplete"),
+        ("not_run", "none", "incomplete"),
+    ],
+)
+def test_every_verdict_has_one_outcome(verdict: str, decided_by: str, outcome: str) -> None:
+    result = JudgedAnswer.model_validate(
+        {
+            "source": None,
+            "case": {
+                "id": "a",
+                "style": "pack",
+                "question": "Q?",
+                "pack": "a",
+                "expect": "E.",
+            },
+            "attempt": 1,
+            "reply": "R",
+            "captured": {},
+            "verdict": verdict,
+            "decided_by": decided_by,
+            "reason": "Why.",
+            "offending_quote": "R" if verdict == "fail" else None,
+        }
+    )
+
+    assert outcome_of(result) == outcome

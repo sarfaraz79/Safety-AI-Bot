@@ -5,12 +5,12 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Self
+from typing import Annotated, Any, Self
 
 import httpx2
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from audit_engine.fields import HEADER_SAFE, EncryptedUrl
+from audit_engine.fields import HEADER_SAFE, EncryptedUrl, Text
 from audit_engine.transcripts import Turn
 from audit_engine.yaml_files import YamlFileError, load_model
 
@@ -41,6 +41,10 @@ class Target(BaseModel):
     actions: dict[str, str] = Field(default_factory=dict)
     token_env: str | None = Field(default=None, pattern=r"^[A-Z_][A-Z0-9_]*$")
     timeout_seconds: float = Field(default=60.0, gt=0, le=600)
+    # Replies that mean the bot gave no real answer, such as its own error message.
+    no_answer_replies: list[Annotated[Text, Field(max_length=500)]] = Field(
+        default_factory=list, max_length=20
+    )
 
     @field_validator("capture")
     @classmethod
@@ -69,6 +73,7 @@ class Answer:
     earlier: tuple[Turn, ...] = ()
     failed_turn: int | None = None  # the customer message with no usable reply, counting from 1
     timeout_seconds: float | None = None
+    no_answer: bool = False  # `reply` is a listed fallback, kept as evidence but not an answer
 
 
 def parse_target(text: str) -> Target:
@@ -97,6 +102,7 @@ class TargetClient:
         self._target = target
         self._url = str(target.url)
         self._headers = {"Authorization": f"Bearer {token}"} if token else {}
+        self._no_answer_replies = frozenset(_normalised(r) for r in target.no_answer_replies)
         # Redirects stay off, so a bot can't send the token somewhere else.
         self._client = http_client or httpx2.AsyncClient(follow_redirects=False)
 
@@ -109,7 +115,7 @@ class TargetClient:
         for number, message in enumerate((*earlier, question), start=1):
             answer = await self._send(message, turns)
             captured = _merge_captured(captured, answer.captured)
-            if answer.reply is None:
+            if answer.reply is None or answer.no_answer:
                 return self._finished(answer, captured, turns, failed_turn=number)
             if number <= len(earlier):
                 turns.append(Turn(customer=message, bot=answer.reply))
@@ -182,7 +188,18 @@ class TargetClient:
             json.dumps([reply, captured], ensure_ascii=False).encode()
         except ValueError:
             return _failed(status, "The response contains broken Unicode.")
-        return Answer(reply=reply, captured=captured, status=status, error=None)
+        return Answer(
+            reply=reply,
+            captured=captured,
+            status=status,
+            error=None,
+            no_answer=_normalised(reply) in self._no_answer_replies,
+        )
+
+
+def _normalised(reply: str) -> str:
+    """Ignore only case and spacing, and match whole replies, so a real answer can't match."""
+    return " ".join(reply.split()).casefold()
 
 
 def _failed(status: int | None, error: str) -> Answer:

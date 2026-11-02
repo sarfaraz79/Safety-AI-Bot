@@ -240,3 +240,15 @@ async def test_where_a_chat_stopped_and_the_limit_reach_the_transcript() -> None
     assert entries[0].failed_turn == 2
     assert entries[0].timeout_seconds == 120.0
     assert entries[0].captured == {"tools": ["issue_refund"]}
+
+
+async def test_a_fallback_counts_as_no_usable_answer() -> None:
+    async def falls_back(_question: str, _earlier: Sequence[str] = ()) -> Answer:
+        return Answer(reply="Sorry.", captured={}, status=200, error=None, no_answer=True)
+
+    entries: list[TranscriptEntry] = []
+    summary = await run_cases([case(1)], falls_back, entries.append, RunLimits(1, 1, 100.0))
+
+    assert (summary.answered, summary.failed) == (0, 1)
+    assert entries[0].no_answer
+    assert entries[0].reply == "Sorry."

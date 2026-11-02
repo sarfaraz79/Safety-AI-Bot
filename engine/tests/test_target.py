@@ -760,3 +760,91 @@ async def test_a_completed_chat_has_no_failed_turn() -> None:
 
     assert answer.reply == "Two"
     assert answer.failed_turn is None
+
+
+# Fallback replies.
+
+FALLBACK = "Sorry, I couldn't complete that request. Please try again."
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        pytest.param(FALLBACK, id="exact"),
+        pytest.param(f"  {FALLBACK}\n", id="spaces-around"),
+        pytest.param(FALLBACK.upper(), id="case"),
+        pytest.param(FALLBACK.replace(" ", "  "), id="spaces-inside"),
+    ],
+)
+@pytest.mark.anyio
+async def test_a_listed_fallback_is_marked_and_kept(reply: str) -> None:
+    answer = await client(reply_with({"reply": reply}), no_answer_replies=[FALLBACK]).ask("Hello?")
+
+    assert answer.no_answer
+    assert answer.reply == reply
+    assert answer.failed_turn == 1
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        pytest.param(f"{FALLBACK} Our cap is £50.", id="fallback-then-a-real-answer"),
+        pytest.param("Sorry, I couldn't complete that request.", id="only-part-of-it"),
+        pytest.param("Our cap is £50.", id="a-real-answer"),
+    ],
+)
+@pytest.mark.anyio
+async def test_a_real_answer_is_never_taken_for_a_fallback(reply: str) -> None:
+    answer = await client(reply_with({"reply": reply}), no_answer_replies=[FALLBACK]).ask("Hello?")
+
+    assert not answer.no_answer
+    assert answer.failed_turn is None
+
+
+@pytest.mark.anyio
+async def test_nothing_is_a_fallback_unless_it_is_listed() -> None:
+    answer = await client(reply_with({"reply": FALLBACK})).ask("Hello?")
+
+    assert not answer.no_answer
+
+
+@pytest.mark.anyio
+async def test_a_fallback_part_way_stops_the_chat_and_keeps_what_came_before() -> None:
+    provider = replies_then_failure(
+        {"reply": "Refunded", "tool_calls": [refund_call()]},
+        {"reply": FALLBACK, "tool_calls": []},
+        {"reply": "Never asked"},
+    )
+
+    answer = await client(
+        provider,
+        capture={"tool_calls": "tool_calls"},
+        no_answer_replies=[FALLBACK],
+        **conversation_target(),
+    ).ask("Third", ["First", "Second"])
+
+    assert answer.no_answer
+    assert answer.reply == FALLBACK
+    assert answer.failed_turn == 2
+    assert answer.captured["tool_calls"] == [refund_call()]
+    assert [turn.bot for turn in answer.earlier] == ["Refunded"]
+
+
+@pytest.mark.parametrize(
+    "replies",
+    [
+        pytest.param(["  "], id="blank"),
+        pytest.param(["x" * 501], id="too-long"),
+        pytest.param(["x"] * 21, id="too-many"),
+    ],
+)
+def test_a_bad_fallback_list_is_refused(replies: list[str]) -> None:
+    with pytest.raises(ValidationError):
+        target(no_answer_replies=replies)
+
+
+def test_the_demo_target_lists_the_demo_bots_fallback() -> None:
+    text = (Path(__file__).parents[2] / "examples" / "targets" / "demo-bot.yaml").read_text("utf-8")
+    fallback = FALLBACK
+
+    assert fallback in parse_target(text).no_answer_replies

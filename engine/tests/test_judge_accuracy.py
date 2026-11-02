@@ -393,3 +393,9 @@ def test_a_sheet_exactly_at_the_limit_is_read(monkeypatch: pytest.MonkeyPatch) -
 
 def test_a_sheet_saved_by_a_spreadsheet_with_a_byte_order_mark_is_read() -> None:
     assert parse_marks("\ufeffrow,your_mark\nr1,pass\n") == {"r1": "pass"}
+
+
+def test_a_fallback_has_nothing_to_mark() -> None:
+    labelled = label_answers({"run": [answer(verdict="error", reply="Sorry.")]})
+
+    assert labelled == []

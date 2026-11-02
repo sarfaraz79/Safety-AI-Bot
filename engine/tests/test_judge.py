@@ -12,6 +12,7 @@ from audit_engine.judge import (
     FAKE_QUOTE,
     MAX_POLICY_CHARS,
     MAX_REPLY_CHARS,
+    NO_ANSWER,
     NO_USABLE_VERDICT,
     NOT_RUN,
     SYSTEM_PROMPT,
@@ -1107,3 +1108,25 @@ async def test_a_failure_with_no_message_gets_a_plain_reason() -> None:
 
     assert result.verdict == "error"
     assert result.reason == "Failed."
+
+
+# Fallback replies.
+
+
+async def test_a_fallback_isnt_sent_to_the_judge_and_is_never_a_pass() -> None:
+    result, llm = await judged(PACK, "Sorry, try again.", no_answer=True, failed_turn=1)
+
+    assert result.verdict == "error"
+    assert result.decided_by == "none"
+    assert result.reason == NO_ANSWER
+    assert result.reply == "Sorry, try again."
+    assert llm.requests == []
+
+
+async def test_a_refund_before_a_fallback_still_fails() -> None:
+    result, _ = await judged_with_actions(
+        FORBIDS_REFUND, "Sorry.", captured=REFUND_TAKEN, no_answer=True, failed_turn=2
+    )
+
+    assert result.verdict == "fail"
+    assert NO_ANSWER in result.reason
