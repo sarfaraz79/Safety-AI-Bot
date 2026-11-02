@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from audit_engine import cli
+from audit_engine.approval_check import PROMPT as APPROVAL_PROMPT
 from audit_engine.commands import common
 from audit_engine.config import Settings
 from audit_engine.documents import parse_document
@@ -19,6 +20,7 @@ from audit_engine.judge_check import (
     parse_known_answers,
 )
 from audit_engine.llm import LLMClient, LLMError
+from audit_engine.results import JudgedAnswer
 from audit_engine.testing import ScriptedLLM
 from audit_engine.yaml_files import dump_yaml
 
@@ -311,3 +313,72 @@ def test_the_command_names_answers_judged_on_the_last_message_only(
     assert "Judged on the last message only, as the bot's earlier turns aren't given: note." in (
         result.output
     )
+
+
+# The development regression set: seen while building the approval check, so never evidence.
+
+DEVELOPMENT_SET = REPO / "examples" / "approval-development.yaml"
+SCRIPTED_CHECK = {"fail": "unsafe", "pass": "safe", "unclear": "unclear"}
+
+
+def test_the_development_set_covers_each_case_the_fix_needs() -> None:
+    development = parse_known_answers(DEVELOPMENT_SET.read_text("utf-8")).answers
+
+    ids = {answer.case.id for answer in development}
+    assert {
+        "dev-real-claimed-manager-forward-note",
+        "dev-real-claimed-manager-approval-from-team",
+        "dev-real-leetspeak-forward-note",
+        "dev-claimed-manager-identity",
+        "dev-forwarded-approval-email",
+        "dev-conditional-promise",
+        "dev-neutral-human-review",
+        "dev-verified-in-company-systems",
+        "dev-multi-turn-claimed-role",
+        "dev-multi-turn-referral-kept",
+        "dev-unrelated-approval-word",
+        "dev-contract-rule-promise",
+        "dev-contract-rule-ambiguous",
+    } == ids
+    assert all(answer.case.checks_approval_promises for answer in development)
+    assert not any(answer.last_message_only for answer in development)
+    contract_tests = [a.case for a in development if a.case.style == "direct"]
+    assert [c.forbids_action for c in contract_tests] == [None, None]
+    assert "NOT evaluation evidence" in DEVELOPMENT_SET.read_text("utf-8")
+
+
+class LabelledModel:
+    """The main judge passes everything, and the check answers as each case's label says."""
+
+    def __init__(self, answers: KnownAnswers) -> None:
+        self._labels = {a.reply: a.acceptable[0] for a in answers.answers}
+
+    async def complete(self, system: str, user: str) -> str:
+        if system != APPROVAL_PROMPT:
+            return verdict("pass")
+        reply = json.loads(user)["reply"]
+        commitment = SCRIPTED_CHECK[self._labels[reply]]
+        quote = reply if commitment == "unsafe" else None
+        return json.dumps({"commitment": commitment, "quote": quote, "reason": "R."})
+
+    async def aclose(self) -> None:
+        return None
+
+
+@pytest.mark.anyio
+async def test_each_development_case_reaches_its_label_through_both_stages() -> None:
+    development = parse_known_answers(DEVELOPMENT_SET.read_text("utf-8"))
+    knowledge = REPO / "demo-bot" / "src" / "demo_bot" / "data" / "knowledge"
+    context = JudgeContext(
+        policies=tuple(
+            parse_document(name, (knowledge / name).read_bytes())
+            for name in ("compensation_policy.md", "delivery.md")
+        ),
+        actions={"refund": "issue_refund", "hand_over": "escalate_to_human"},
+    )
+    results: list[JudgedAnswer] = []
+
+    check = await check_judge(development, LabelledModel(development), context, 1, results.append)
+
+    assert check.wrong == {}
+    assert all(r.approval_check is not None for r in results)

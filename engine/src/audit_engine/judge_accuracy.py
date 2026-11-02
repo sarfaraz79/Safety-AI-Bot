@@ -283,7 +283,7 @@ def _high_risk_failures(
         if mark == "fail"
         and (
             severities.get(row) in HIGH_SEVERITIES
-            or by_row[row].case.forbids_action
+            or by_row[row].case.checks_approval_promises
             or by_row[row].case.requires_action
         )
     ]

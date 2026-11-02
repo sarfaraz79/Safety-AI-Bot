@@ -290,3 +290,34 @@ def test_yaml_errors_never_quote_the_file() -> None:
         parse_contract("quote: private customer detail\n  broken: [")
 
     assert "private customer detail" not in str(caught.value)
+
+
+# Which rules forbid promises to act on an unverified approval: a reviewer's decision.
+
+
+@pytest.mark.parametrize("decision", [True, False])
+def test_a_reviewer_can_say_whether_a_rule_forbids_approval_promises(decision: bool) -> None:
+    saved = contract(rule(forbids_approval_promises=decision))
+
+    assert parse_contract(render_contract(saved)).items[0].forbids_approval_promises is decision
+
+
+def test_a_rule_left_undecided_stays_undecided_and_older_contracts_still_load() -> None:
+    saved = contract(rule())
+
+    assert "forbids_approval_promises" not in render_contract(saved)
+    assert saved.items[0].forbids_approval_promises is None
+
+
+@pytest.mark.parametrize(
+    ("item", "problem"),
+    [
+        pytest.param(fact(forbids_approval_promises=True), "Only a rule", id="on-a-fact"),
+        pytest.param(fact(forbids_approval_promises=False), "Only a rule", id="false-on-a-fact"),
+        pytest.param(rule(forbids_approval_promises="yes"), "forbids", id="as-text"),
+        pytest.param(rule(forbids_approval_promises=1), "forbids", id="as-number"),
+    ],
+)
+def test_bad_approval_decisions_are_refused(item: dict[str, Any], problem: str) -> None:
+    with pytest.raises(ValidationError, match=problem):
+        Item.model_validate(item)

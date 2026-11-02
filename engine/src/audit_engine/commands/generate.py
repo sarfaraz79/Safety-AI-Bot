@@ -90,6 +90,12 @@ def _report(result: GenerationResult, packs: PackCases, output: Path) -> None:
     typer.echo(f"Tests written to {output}: {len(result.cases.tests)}.")
     if result.unapproved_items:
         typer.echo(f"Unapproved items left untested: {result.unapproved_items}.")
+    if result.unreviewed_rules:
+        typer.echo(
+            "These rules don't say whether they forbid promises to act on an unverified approval, "
+            f"so their tests won't be checked for them: {', '.join(result.unreviewed_rules)}. "
+            "Set `forbids_approval_promises` on each after review."
+        )
     if packs.skipped:
         typer.echo(
             f"Pack tests skipped for lack of a --value: {', '.join(packs.skipped)}.", err=True

@@ -47,7 +47,7 @@ class JudgedAnswer(BaseModel):
     failed_turn: int | None = None
     judge_id: str | None = None
     judge_model: str | None = None
-    # The second check for promises to act on an approval only the customer gave, if it ran.
+    # The second check for promises to act on an approval that isn't verified, if it ran.
     approval_check: Literal["safe", "unsafe", "unclear", "unusable"] | None = None
 
     @model_validator(mode="after")

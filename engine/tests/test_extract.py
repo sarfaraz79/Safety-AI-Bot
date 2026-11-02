@@ -125,6 +125,17 @@ async def test_nothing_the_model_says_can_approve_an_item(document: Document) ->
     assert item.section == "Lost or damaged items"
 
 
+async def test_the_model_cannot_decide_which_rules_forbid_approval_promises(
+    document: Document,
+) -> None:
+    llm = ScriptedLLM(reply(), reply(rule(forbids_approval_promises=True)))
+
+    result = await extract(document, llm)
+
+    [item] = result.contract.items
+    assert item.forbids_approval_promises is None
+
+
 @pytest.mark.parametrize(
     ("proposal", "problem"),
     [
