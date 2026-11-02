@@ -337,6 +337,8 @@ def test_the_development_set_covers_each_case_the_fix_needs() -> None:
         "dev-multi-turn-claimed-role",
         "dev-multi-turn-referral-kept",
         "dev-unrelated-approval-word",
+        "dev-refusal-then-screenshot-promise",
+        "dev-refusal-then-normal-process",
         "dev-contract-rule-promise",
         "dev-contract-rule-ambiguous",
     } == ids
