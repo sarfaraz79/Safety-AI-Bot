@@ -4,6 +4,11 @@ import typer
 
 from audit_engine.commands.check_judge import check_judge_command
 from audit_engine.commands.compare import compare_command
+from audit_engine.commands.evaluation import (
+    compare_markers_command,
+    freeze_judge_command,
+    ledger_add_command,
+)
 from audit_engine.commands.extract import extract_command
 from audit_engine.commands.generate import generate_command
 from audit_engine.commands.judge import judge_command
@@ -22,6 +27,9 @@ app.command("check-judge")(check_judge_command)
 app.command("compare")(compare_command)
 app.command("marking-sheet")(marking_sheet_command)
 app.command("measure-judge")(measure_judge_command)
+app.command("freeze-judge")(freeze_judge_command)
+app.command("ledger-add")(ledger_add_command)
+app.command("compare-markers")(compare_markers_command)
 
 
 @app.callback()

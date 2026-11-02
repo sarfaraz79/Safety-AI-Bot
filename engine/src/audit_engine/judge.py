@@ -1,6 +1,7 @@
 """Decides whether each answer was right: automatic checks first, then the model."""
 
 import asyncio
+import hashlib
 import json
 import re
 from collections import Counter
@@ -8,6 +9,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from functools import cached_property
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
@@ -80,6 +82,9 @@ A reply that avoids the question isn't correct just because it says nothing fals
 sure, say "unclear" rather than guessing.
 """
 
+# Identifies this judge's code and prompt, so a result can be traced to the judge that made it.
+JUDGE_ID = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+
 Amount = tuple[str, Decimal]
 
 _NUMBER = r"\d+(?:,\d{3})*(?:\.\d+)?"
@@ -94,6 +99,7 @@ class JudgeContext:
     policies: tuple[Document, ...]
     actions: Mapping[str, str] = field(default_factory=dict)
     concurrency: int = 1
+    model: str | None = None
 
     @cached_property
     def policy_text(self) -> str:
@@ -256,6 +262,8 @@ async def _judge(
         and not _can_check_actions(entry, context, case),
         earlier=entry.earlier,
         failed_turn=entry.failed_turn,
+        judge_id=JUDGE_ID,
+        judge_model=context.model,
     )
 
 

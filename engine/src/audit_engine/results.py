@@ -45,6 +45,8 @@ class JudgedAnswer(BaseModel):
     action_unchecked: bool = False
     earlier: list[Turn] = Field(default_factory=list)
     failed_turn: int | None = None
+    judge_id: str | None = None
+    judge_model: str | None = None
 
     @model_validator(mode="after")
     def _check_failures_show_their_evidence(self) -> Self:

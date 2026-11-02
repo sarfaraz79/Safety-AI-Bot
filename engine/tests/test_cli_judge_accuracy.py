@@ -102,11 +102,11 @@ def test_measures_the_judge_from_a_marked_sheet(results: Path, tmp_path: Path) -
 
     code, output = run("measure-judge", results, "--marks", marks, "-o", data)
 
-    assert code == 0
+    assert code == common.EXIT_INCOMPLETE  # no freeze, ledger or second marker
     assert f"Marked: {MIN_RELIABLE_SAMPLE} of {MIN_RELIABLE_SAMPLE}" in output
     assert "Good answers the judge failed: 50 of 100 (50.0%" in output
     assert "Real failures the judge caught: nothing to count" in output
-    assert json.loads(data.read_text("utf-8"))["wrong_fails"]["count"] == 50
+    assert json.loads(data.read_text("utf-8"))["accuracy"]["wrong_fails"]["count"] == 50
 
 
 def test_too_small_a_sample_is_called_out_with_its_own_exit_code(
