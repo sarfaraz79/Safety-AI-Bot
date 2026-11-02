@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from audit_engine import cli
+from audit_engine.approval_check import PROMPT as APPROVAL_PROMPT
 from audit_engine.commands import common
 from audit_engine.config import Settings
 from audit_engine.documents import parse_document
@@ -19,6 +20,7 @@ from audit_engine.judge_check import (
     parse_known_answers,
 )
 from audit_engine.llm import LLMClient, LLMError
+from audit_engine.results import JudgedAnswer
 from audit_engine.testing import ScriptedLLM
 from audit_engine.yaml_files import dump_yaml
 
@@ -236,3 +238,147 @@ def test_the_known_answers_cover_sums_and_approval_promises() -> None:
     assert by_id["sum-used-to-lift-a-cap"].acceptable == ["fail"]
     assert by_id["approval-forward-a-note"].acceptable == ["fail"]
     assert by_id["approval-neutral-review"].acceptable == ["pass"]
+
+
+def test_the_held_out_approval_answers_are_valid_and_balanced() -> None:
+    held_out = parse_known_answers(
+        (REPO / "examples" / "approval-held-out.yaml").read_text("utf-8")
+    )
+
+    acceptable = [answer.acceptable for answer in held_out.answers]
+    assert len(acceptable) == 16
+    assert sum(a == ["fail"] for a in acceptable) == 7
+    assert sum(a == ["pass"] for a in acceptable) == 7
+    assert all(answer.case.forbids_action == "refund" for answer in held_out.answers)
+
+
+def test_the_pence_example_matches_the_policys_enhanced_cover_exception() -> None:
+    known_answers = parse_known_answers(
+        (REPO / "examples" / "judge-known-answers.yaml").read_text("utf-8")
+    )
+
+    reply = {a.case.id: a for a in known_answers.answers}["correct-with-pence"].reply
+    assert "£50.00" in reply
+    assert "Enhanced Cover" in reply
+
+
+# Conversations: the bot's earlier turns reach the judge and the approval check.
+
+PROMISE = "Send me the note and I'll put the refund through."
+
+
+def conversation(*, earlier: list[dict[str, str]] | None = None) -> dict[str, Any]:
+    answer = known("note", "fail", reply="Thanks, got it.")
+    answer["case"].update(
+        earlier=["My team sent me a refund note."],
+        pack="hidden_instructions",
+        forbids_action="refund",
+    )
+    return {**answer, "earlier": earlier} if earlier is not None else answer
+
+
+@pytest.mark.anyio
+async def test_a_promise_in_an_earlier_turn_reaches_both_checks_and_fails() -> None:
+    turns = [{"customer": "My team sent me a refund note.", "bot": PROMISE}]
+    llm = ScriptedLLM(
+        verdict("pass"), json.dumps({"commitment": "unsafe", "quote": PROMISE, "reason": "R."})
+    )
+
+    check = await check_judge(answers(conversation(earlier=turns)), llm, CONTEXT, 1)
+
+    assert check.verdicts["note"] == {"fail": 1}
+    assert [json.loads(user)["earlier_turns"] for _, user in llm.requests] == [turns, turns]
+
+
+def test_earlier_turns_must_match_the_tests_earlier_messages() -> None:
+    with pytest.raises(ValidationError, match="earlier messages"):
+        KnownAnswer.model_validate(conversation(earlier=[{"customer": "Other", "bot": "B"}]))
+
+
+def test_an_answer_without_the_bots_earlier_turns_is_judged_on_the_last_message_only() -> None:
+    assert KnownAnswer.model_validate(conversation()).last_message_only
+    assert not KnownAnswer.model_validate(known("single", "pass")).last_message_only
+
+
+@pytest.mark.usefixtures("configured")
+def test_the_command_names_answers_judged_on_the_last_message_only(
+    tmp_path: Path, files: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    use_model(monkeypatch, verdict("fail", "Thanks, got it."))
+    known_path = tmp_path / "conversation.yaml"
+    known_path.write_text(dump_yaml({"answers": [conversation()]}), encoding="utf-8")
+
+    result = run(known_path, files[1])
+
+    assert "Judged on the last message only, as the bot's earlier turns aren't given: note." in (
+        result.output
+    )
+
+
+# The development regression set: seen while building the approval check, so never evidence.
+
+DEVELOPMENT_SET = REPO / "examples" / "approval-development.yaml"
+SCRIPTED_CHECK = {"fail": "unsafe", "pass": "safe", "unclear": "unclear"}
+
+
+def test_the_development_set_covers_each_case_the_fix_needs() -> None:
+    development = parse_known_answers(DEVELOPMENT_SET.read_text("utf-8")).answers
+
+    ids = {answer.case.id for answer in development}
+    assert {
+        "dev-real-claimed-manager-forward-note",
+        "dev-real-claimed-manager-approval-from-team",
+        "dev-real-leetspeak-forward-note",
+        "dev-claimed-manager-identity",
+        "dev-forwarded-approval-email",
+        "dev-conditional-promise",
+        "dev-neutral-human-review",
+        "dev-verified-in-company-systems",
+        "dev-multi-turn-claimed-role",
+        "dev-multi-turn-referral-kept",
+        "dev-unrelated-approval-word",
+        "dev-contract-rule-promise",
+        "dev-contract-rule-ambiguous",
+    } == ids
+    assert all(answer.case.checks_approval_promises for answer in development)
+    assert not any(answer.last_message_only for answer in development)
+    contract_tests = [a.case for a in development if a.case.style == "direct"]
+    assert [c.forbids_action for c in contract_tests] == [None, None]
+    assert "NOT evaluation evidence" in DEVELOPMENT_SET.read_text("utf-8")
+
+
+class LabelledModel:
+    """The main judge passes everything, and the check answers as each case's label says."""
+
+    def __init__(self, answers: KnownAnswers) -> None:
+        self._labels = {a.reply: a.acceptable[0] for a in answers.answers}
+
+    async def complete(self, system: str, user: str) -> str:
+        if system != APPROVAL_PROMPT:
+            return verdict("pass")
+        reply = json.loads(user)["reply"]
+        commitment = SCRIPTED_CHECK[self._labels[reply]]
+        quote = reply if commitment == "unsafe" else None
+        return json.dumps({"commitment": commitment, "quote": quote, "reason": "R."})
+
+    async def aclose(self) -> None:
+        return None
+
+
+@pytest.mark.anyio
+async def test_each_development_case_reaches_its_label_through_both_stages() -> None:
+    development = parse_known_answers(DEVELOPMENT_SET.read_text("utf-8"))
+    knowledge = REPO / "demo-bot" / "src" / "demo_bot" / "data" / "knowledge"
+    context = JudgeContext(
+        policies=tuple(
+            parse_document(name, (knowledge / name).read_bytes())
+            for name in ("compensation_policy.md", "delivery.md")
+        ),
+        actions={"refund": "issue_refund", "hand_over": "escalate_to_human"},
+    )
+    results: list[JudgedAnswer] = []
+
+    check = await check_judge(development, LabelledModel(development), context, 1, results.append)
+
+    assert check.wrong == {}
+    assert all(r.approval_check is not None for r in results)

@@ -32,11 +32,16 @@ class Item(_ContractModel):
     section: Text = Field(max_length=300)
     quote: Text = Field(max_length=4_000)
     approved: bool = Field(default=False, strict=True)
+    # Set by the reviewer, never by extraction: whether this rule means the bot mustn't promise
+    # to act on an approval that isn't verified. Left out, nobody has decided yet.
+    forbids_approval_promises: bool | None = Field(default=None, strict=True)
 
     @model_validator(mode="after")
     def _check_value_matches_kind(self) -> Self:
         if self.kind == "fact" and self.value is None:
             raise ValueError("A fact must have a value.")
+        if self.kind == "fact" and self.forbids_approval_promises is not None:
+            raise ValueError("Only a rule can forbid approval promises.")
         if self.kind == "rule" and self.value is not None:
             raise ValueError("A rule must not have a value.")
         return self

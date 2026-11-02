@@ -50,11 +50,16 @@ class _Reply(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class GenerationResult:
-    """`failed_items` had no usable questions, so those approved items are not being tested."""
+    """`failed_items` had no usable questions, so those approved items are not being tested.
+
+    `unreviewed_rules` don't say whether they forbid approval promises, so their tests don't get
+    the second check for them until a person decides.
+    """
 
     cases: CaseFile
     failed_items: tuple[str, ...]
     unapproved_items: int
+    unreviewed_rules: tuple[str, ...] = ()
 
 
 async def generate(
@@ -74,6 +79,11 @@ async def generate(
         cases=CaseFile(source=contract.source, tests=[*cases, *pack_cases]),
         failed_items=tuple(failed),
         unapproved_items=len(contract.items) - len(approved),
+        unreviewed_rules=tuple(
+            item.id
+            for item in approved
+            if item.kind == "rule" and item.forbids_approval_promises is None
+        ),
     )
 
 
@@ -142,6 +152,7 @@ def _to_cases(item: Item, questions: _Reply) -> tuple[Case, Case, Case]:
                 "expected_value": item.value,
                 "quote": item.quote,
                 "section": item.section,
+                "forbids_approval_promises": item.forbids_approval_promises or None,
             }
         )
 

@@ -55,3 +55,4 @@ items:
   section: How to claim
   quote: Support agents cannot approve compensation in chat
   approved: true
+  forbids_approval_promises: true

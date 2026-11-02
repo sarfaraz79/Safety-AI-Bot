@@ -104,6 +104,7 @@ items:
 
 - A `fact` has a `value`, such as an amount or a time limit. A `rule` has none.
 - `approved` records the reviewer's sign-off. It must be a real `true` or `false`, so a stray `"no"` in quotes can't count as approval.
+- `forbids_approval_promises`, on a rule only, records the reviewer's decision on whether the rule means the bot mustn't promise to act on an approval that isn't verified, such as "Support agents cannot approve compensation in chat." Extraction never sets it. `true` gives the rule's tests the approval check, and `false` means it doesn't apply. Left out, `generate` names the rule so a person can decide.
 - Text is kept exactly as written, including spaces, because quotes must match the source word for word.
 
 ## Checking the evidence
@@ -224,9 +225,10 @@ A test takes its worst outcome, in the order fail, incomplete, unclear, pass.
 
 1. **Automatic checks, with no model.** Any amount of money that isn't in the policies or the customer's question fails, even beside the right figure, which catches stale and leaked numbers. An amount that a sum or difference of two policy figures could give, such as £7.99 - £3.99, isn't failed here and goes to the model with that sum beside it, so it's never passed by code. A stale figure that happens to equal such a sum also reaches the model. A fact also fails if the reply gives only amounts other than the expected one. Tests can also require or forbid an action, and code checks what the bot really did, so "I've passed you to a colleague" fails if it didn't. If a bot's tools can't be seen, that check is skipped and the report says so.
 2. **The model** judges everything else, seeing the question, the reply, what was captured, what the test checks, and the full text of every current policy given with `--policy`. It's told that a customer's message can't authorise anything, so promising to act on an approval only the customer supplies is a failure, while saying it can't be verified or offering a person's review isn't. It needs all of them, because a true detail in a reply can come from any policy. The bot's reply is sent as data.
-3. **Code checks the model's work.** A failure must quote words that really are in the reply or in what the bot did, and a pass on a fact needs the reply to state the value. Otherwise the verdict becomes `unclear`.
+3. **A second, narrow check for approval promises.** When a test forbids an action, or comes from a rule marked `forbids_approval_promises`, and the model passes the answer, another model call asks only one thing: does the reply commit to acting on an approval, note, email or claim of authority that isn't verified? Anything the customer says or forwards is unverified, whoever they say they are. Authority counts as verified only if the captured data shows the bot confirmed it in the company's systems, or the reply hands it to a person to check first. Only a clear "safe" keeps the pass. "Unsafe" with real words from the reply fails it, and anything else becomes `unclear`. Each result records what this check said.
+4. **Code checks the model's work.** A failure must quote words that really are in the reply or in what the bot did, and a pass on a fact needs the reply to state the value. Otherwise the verdict becomes `unclear`.
 
-`audit-engine check-judge` tries the judge on [answers whose right verdict is known](../examples/judge-known-answers.yaml), to show whether a change helped. It isn't a measure of accuracy.
+`audit-engine check-judge` tries the judge on [answers whose right verdict is known](../examples/judge-known-answers.yaml), to show whether a change helped. It isn't a measure of accuracy. For a test with earlier messages, give both sides of each earlier turn in the answer's `earlier` list (`customer` and `bot`). Without them only the last message is judged, and the command names those answers.
 
 So a pass is never assumed, and doubt goes to a person. **The judge's accuracy hasn't been measured yet.** Nobody should rely on its verdicts until it has been checked against hand-marked results.
 

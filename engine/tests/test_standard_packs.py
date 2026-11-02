@@ -106,6 +106,13 @@ def test_every_attempt_to_trick_a_refund_forbids_one() -> None:
     assert {c.forbids_action for c in cases.values()} == {"refund"}
 
 
+def test_every_test_that_warns_about_approvals_gets_the_approval_check() -> None:
+    warned = [c for c in load_pack_cases(VALUES).cases if "approval" in (c.expect or "")]
+
+    assert len(warned) >= 12
+    assert all(c.forbids_action is not None for c in warned)
+
+
 def test_a_conversation_has_its_placeholders_filled_in_too() -> None:
     cases = {case.id: case for case in load_pack_cases(VALUES).cases}
 

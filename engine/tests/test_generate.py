@@ -446,3 +446,57 @@ async def test_a_reply_exactly_at_the_size_limit_is_read(document: Document) -> 
     result = await generate(contract_for(document, fact()), document, llm)
 
     assert result.failed_items == ()
+
+
+# A reviewed rule passes its decision on approval promises to its tests.
+
+
+async def test_a_rule_that_forbids_approval_promises_marks_all_three_tests(
+    document: Document,
+) -> None:
+    result = await generate(
+        contract_for(document, rule(forbids_approval_promises=True)), document, ScriptedLLM(GOOD)
+    )
+
+    assert [c.forbids_approval_promises for c in result.cases.tests] == [True, True, True]
+    assert all(c.checks_approval_promises for c in result.cases.tests)
+    assert all(c.forbids_action is None for c in result.cases.tests)
+    assert result.unreviewed_rules == ()
+    assert parse_cases(render_cases(result.cases)) == result.cases
+
+
+@pytest.mark.parametrize("decision", [False, None])
+async def test_other_rules_and_facts_get_no_approval_check(
+    document: Document, decision: bool | None
+) -> None:
+    result = await generate(
+        contract_for(document, fact(), rule(forbids_approval_promises=decision)),
+        document,
+        ScriptedLLM(GOOD, GOOD),
+    )
+
+    assert not any(c.checks_approval_promises for c in result.cases.tests)
+    assert "forbids_approval_promises" not in render_cases(result.cases)
+
+
+async def test_only_undecided_approved_rules_are_flagged_for_review(document: Document) -> None:
+    items = [
+        fact(),
+        rule(id="undecided"),
+        rule(id="decided-no", forbids_approval_promises=False),
+        rule(id="decided-yes", forbids_approval_promises=True),
+        rule(id="unapproved", approved=False),
+    ]
+
+    result = await generate(contract_for(document, *items), document, ScriptedLLM(*[GOOD] * 4))
+
+    assert result.unreviewed_rules == ("undecided",)
+
+
+def test_the_example_contract_marks_only_the_rule_the_policy_states() -> None:
+    contract = parse_contract(
+        (REPO / "examples" / "contracts" / "compensation_policy.yaml").read_text("utf-8")
+    )
+
+    marked = [item for item in contract.items if item.forbids_approval_promises]
+    assert [item.quote for item in marked] == ["Support agents cannot approve compensation in chat"]

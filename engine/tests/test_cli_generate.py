@@ -200,6 +200,19 @@ def test_unapproved_items_are_counted(
     assert "Unapproved items left untested: 1." in result.output
 
 
+@pytest.mark.usefixtures("configured")
+def test_rules_undecided_on_approval_promises_are_named(
+    policy: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    use_model(monkeypatch, GOOD)
+    path = write_contract(tmp_path, policy, kind="rule", value=None, statement="Capped.")
+
+    result = run("generate", path, "--policy", policy, "-o", tmp_path / "t.yaml", "--no-packs")
+
+    assert result.exit_code == 0
+    assert "so their tests won't be checked for them: policy-1." in result.output
+
+
 # Every mistake must be caught before any model call, and even before settings are needed.
 
 

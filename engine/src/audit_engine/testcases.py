@@ -44,6 +44,13 @@ class Case(_CaseModel):
     # What the bot must or mustn't do, named as in the target file's `actions`:
     requires_action: str | None = Field(default=None, pattern=r"^[a-z_]+$")
     forbids_action: str | None = Field(default=None, pattern=r"^[a-z_]+$")
+    # From a reviewed contract rule: promising to act on an unverified approval fails the test.
+    forbids_approval_promises: Literal[True] | None = None
+
+    @property
+    def checks_approval_promises(self) -> bool:
+        """Whether a passed answer gets the second check for promises to act on an approval."""
+        return self.forbids_action is not None or self.forbids_approval_promises is True
 
     @model_validator(mode="after")
     def _check_fields_match_style(self) -> Self:
